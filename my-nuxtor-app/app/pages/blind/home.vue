@@ -10,15 +10,15 @@
 				@pointerleave="cancelHold('help')"
 				@pointercancel="cancelHold('help')"
 			>
-				<span class="text-[78px] leading-[0.95] font-semibold tracking-[-0.03em]">
+				<span class="text-[56px] leading-[0.96] font-semibold tracking-[-0.03em] sm:text-[62px]">
 					НАЙТИ
 					<br>
 					ПОМОЩЬ
 				</span>
-				<span class="text-[74px] leading-[0.9] font-semibold tracking-[-0.03em]">
+				<span class="text-[52px] leading-[0.92] font-semibold tracking-[-0.03em] sm:text-[58px]">
 					ЗАЖМИ
 					<br>
-					<span class="text-[64px]">НА 5 СЕКУНД</span>
+					<span class="text-[42px] sm:text-[46px]">НА 5 СЕКУНД</span>
 				</span>
 			</button>
 
@@ -31,15 +31,15 @@
 				@pointerleave="cancelHold('conversation')"
 				@pointercancel="cancelHold('conversation')"
 			>
-				<span class="text-[76px] leading-[0.92] font-semibold tracking-[-0.03em]">
+				<span class="text-[54px] leading-[0.94] font-semibold tracking-[-0.03em] sm:text-[60px]">
 					РЕЖИМ
 					<br>
 					РАЗГОВОРА
 				</span>
-				<span class="text-[74px] leading-[0.9] font-semibold tracking-[-0.03em]">
+				<span class="text-[52px] leading-[0.92] font-semibold tracking-[-0.03em] sm:text-[58px]">
 					ЗАЖМИ
 					<br>
-					<span class="text-[64px]">НА 5 СЕКУНД</span>
+					<span class="text-[42px] sm:text-[46px]">НА 5 СЕКУНД</span>
 				</span>
 			</button>
 
@@ -91,6 +91,7 @@ const HOLD_MS = 5000;
 const BLIND_HOME_ANNOUNCEMENT_TEXT = "Давай познакомим тебя с приложением, что бы получить помощь просто скажи «Найти Помощь» или зажми кнопку «Найти Помощь» на 5 секунд. Если хочешь просто поговорить - скажи «Давай поговорим» или зажми кнопку «Режим Разговора» на 5 секунд.";
 const VOICE_HELP_KEYWORDS = ["найти помощь", "найти помошь"];
 const VOICE_CONVERSATION_KEYWORDS = ["давай поговорим", "режим разговора"];
+const ONBOARDING_INTERESTS_KEY = "volunteer_onboarding_interests";
 const auth = useStrapiAuth();
 const call = useCallMatching();
 
@@ -471,7 +472,30 @@ function cancelHold(action: BlindAction): void {
 	}
 }
 
-function buildBlindRequestMeta(): { blindProfileId: number | null, blindName: string } {
+function readBlindInterestsFromStorage(): string {
+	const fromProfile = String(auth.profile.value?.interest || "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 360);
+	if (fromProfile) {
+		return fromProfile;
+	}
+
+	if (!import.meta.client || typeof window === "undefined") {
+		return "";
+	}
+
+	try {
+		return String(window.localStorage.getItem(ONBOARDING_INTERESTS_KEY) || "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 360);
+	} catch {
+		return "";
+	}
+}
+
+function buildBlindRequestMeta(): { blindProfileId: number | null, blindName: string, blindInterests: string } {
 	const profileId = Number(auth.profile.value?.id || 0);
 	const blindProfileId = Number.isFinite(profileId) && profileId > 0 ? Math.floor(profileId) : null;
 	const blindName = String(
@@ -479,11 +503,47 @@ function buildBlindRequestMeta(): { blindProfileId: number | null, blindName: st
 		|| auth.onboardingName.value
 		|| ""
 	).trim();
+	const blindInterests = readBlindInterestsFromStorage();
 
 	return {
 		blindProfileId,
-		blindName
+		blindName,
+		blindInterests
 	};
+}
+
+async function syncBlindInterestToProfileIfNeeded(blindInterests: string): Promise<void> {
+	const normalizedInterests = String(blindInterests || "").replace(/\s+/g, " ").trim().slice(0, 360);
+	if (!normalizedInterests || !auth.profile.value) {
+		return;
+	}
+
+	const currentProfileInterests = String(auth.profile.value.interest || "").replace(/\s+/g, " ").trim().slice(0, 360);
+	if (currentProfileInterests === normalizedInterests) {
+		return;
+	}
+
+	if (auth.profileCollection.value === "profiles") {
+		try {
+			await auth.updateProfile({ interest: normalizedInterests });
+		} catch {
+			// noop
+		}
+	}
+
+	try {
+		await $fetch("/api/blind/interest/persist", {
+			method: "POST",
+			body: {
+				interest: normalizedInterests,
+				profileId: auth.profile.value.id,
+				email: auth.profile.value.emailDisplay || auth.user.value?.email || ""
+			}
+		});
+		auth.profile.value.interest = normalizedInterests;
+	} catch {
+		// noop
+	}
 }
 
 async function triggerAction(action: BlindAction): Promise<void> {
@@ -500,7 +560,9 @@ async function triggerAction(action: BlindAction): Promise<void> {
 
 	if (action === "help") {
 		try {
-			const sessionId = await call.createHelpRequest(buildBlindRequestMeta());
+			const requestMeta = buildBlindRequestMeta();
+			await syncBlindInterestToProfileIfNeeded(requestMeta.blindInterests);
+			const sessionId = await call.createHelpRequest(requestMeta);
 			await navigateTo({
 				path: "/blind/help",
 				query: {

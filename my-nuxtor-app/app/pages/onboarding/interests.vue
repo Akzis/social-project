@@ -117,7 +117,7 @@ function readStoredInterests(): string {
 		return "";
 	}
 
-	return String(localStorage.getItem(ONBOARDING_INTERESTS_KEY) || "").trim();
+	return normalizeInterestsValue(localStorage.getItem(ONBOARDING_INTERESTS_KEY) || "");
 }
 
 function persistInterests(value: string): void {
@@ -125,12 +125,19 @@ function persistInterests(value: string): void {
 		return;
 	}
 
-	const normalizedValue = value.trim();
+	const normalizedValue = normalizeInterestsValue(value);
 	if (normalizedValue) {
 		localStorage.setItem(ONBOARDING_INTERESTS_KEY, normalizedValue);
 	} else {
 		localStorage.removeItem(ONBOARDING_INTERESTS_KEY);
 	}
+}
+
+function normalizeInterestsValue(value: unknown): string {
+	return String(value || "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 360);
 }
 
 function clearHoldTimers(): void {
@@ -296,8 +303,10 @@ function ensureRecognition(): SpeechRecognitionLike | null {
 			return;
 		}
 
-		interests.value = transcript;
-		statusMessage.value = `Интерес: ${transcript}`;
+		const normalizedTranscript = normalizeInterestsValue(transcript);
+		interests.value = normalizedTranscript;
+		persistInterests(normalizedTranscript);
+		statusMessage.value = `Интерес: ${normalizedTranscript}`;
 		void navigateTo("/onboarding/interests-repeat");
 	};
 

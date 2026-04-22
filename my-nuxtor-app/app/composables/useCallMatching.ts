@@ -8,6 +8,10 @@ interface CreateSessionResponse {
 	createdAt: number
 	blindProfileId?: number | null
 	blindName?: string
+	blindInterests?: string
+	volunteerProfileId?: number | null
+	volunteerProfileDocumentId?: string
+	volunteerName?: string
 }
 
 interface ClaimSessionResponse {
@@ -17,6 +21,10 @@ interface ClaimSessionResponse {
 	matchedAt?: number | null
 	blindProfileId?: number | null
 	blindName?: string
+	blindInterests?: string
+	volunteerProfileId?: number | null
+	volunteerProfileDocumentId?: string
+	volunteerName?: string
 }
 
 interface SessionStatusResponse {
@@ -27,11 +35,22 @@ interface SessionStatusResponse {
 	endedAt: number | null
 	blindProfileId?: number | null
 	blindName?: string
+	blindInterests?: string
+	volunteerProfileId?: number | null
+	volunteerProfileDocumentId?: string
+	volunteerName?: string
 }
 
 interface CreateHelpRequestInput {
 	blindProfileId?: number | null
 	blindName?: string
+	blindInterests?: string
+}
+
+interface ClaimHelpRequestInput {
+	volunteerProfileId?: number | null
+	volunteerProfileDocumentId?: string
+	volunteerName?: string
 }
 
 interface SignalResponse {
@@ -77,7 +96,8 @@ export function useCallMatching() {
 			method: "POST",
 			body: {
 				blindProfileId: input.blindProfileId ?? null,
-				blindName: String(input.blindName || "").trim()
+				blindName: String(input.blindName || "").trim(),
+				blindInterests: String(input.blindInterests || "").trim()
 			}
 		});
 
@@ -85,9 +105,14 @@ export function useCallMatching() {
 		return payload.sessionId;
 	}
 
-	async function claimHelpRequest(): Promise<ClaimSessionResponse> {
+	async function claimHelpRequest(input: ClaimHelpRequestInput = {}): Promise<ClaimSessionResponse> {
 		const payload = await $fetch<ClaimSessionResponse>("/api/call/match/claim", {
-			method: "POST"
+			method: "POST",
+			body: {
+				volunteerProfileId: input.volunteerProfileId ?? null,
+				volunteerProfileDocumentId: String(input.volunteerProfileDocumentId || "").trim(),
+				volunteerName: String(input.volunteerName || "").trim()
+			}
 		});
 
 		if (payload.found && payload.sessionId) {

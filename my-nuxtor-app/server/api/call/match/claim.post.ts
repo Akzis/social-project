@@ -1,7 +1,18 @@
 import { claimWaitingSession } from "../../../utils/callStore";
 
-export default defineEventHandler(() => {
-	const session = claimWaitingSession();
+interface ClaimBody {
+	volunteerProfileId?: number | null
+	volunteerProfileDocumentId?: string
+	volunteerName?: string
+}
+
+export default defineEventHandler(async (event) => {
+	const body = await readBody<ClaimBody>(event);
+	const session = claimWaitingSession({
+		volunteerProfileId: body?.volunteerProfileId,
+		volunteerProfileDocumentId: body?.volunteerProfileDocumentId,
+		volunteerName: body?.volunteerName
+	});
 
 	if (!session) {
 		return {
@@ -15,6 +26,10 @@ export default defineEventHandler(() => {
 		status: session.status,
 		matchedAt: session.matchedAt,
 		blindProfileId: session.blindProfileId,
-		blindName: session.blindName
+		blindName: session.blindName,
+		blindInterests: session.blindInterests,
+		volunteerProfileId: session.volunteerProfileId,
+		volunteerProfileDocumentId: session.volunteerProfileDocumentId,
+		volunteerName: session.volunteerName
 	};
 });

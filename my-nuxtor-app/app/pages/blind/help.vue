@@ -66,8 +66,10 @@
 const SEARCH_TIMEOUT_MS = 20000;
 const POLL_INTERVAL_MS = 1000;
 const SEARCH_ANNOUNCEMENT_TEXT = "Ищем волонтера";
-const FOUND_ANNOUNCEMENT_TEXT = "Волонтер найден! Соеденяем";
+const SEARCH_SAFETY_ANNOUNCEMENT_TEXT = "Если захочешь завершить звонок, зажми экран на 10 секунд. Не делись личными данными — например, номером карты или адресом. Наши волонтёры проверены, но важно соблюдать осторожность.";
+const FOUND_ANNOUNCEMENT_TEXT = "Начинаем звонок";
 const FOUND_NAVIGATION_DELAY_MS = 1900;
+const ONBOARDING_INTERESTS_KEY = "volunteer_onboarding_interests";
 
 type HelpScreenState = "searching" | "found" | "not_found";
 
@@ -207,6 +209,39 @@ function runSearchAnnouncement(): void {
 		}
 
 		speechUtterance = null;
+		runSearchSafetyAnnouncement();
+	};
+
+	utterance.onerror = () => {
+		if (speechUtterance !== utterance) {
+			return;
+		}
+
+		speechUtterance = null;
+	};
+
+	speechUtterance = utterance;
+	window.speechSynthesis.speak(utterance);
+}
+
+function runSearchSafetyAnnouncement(): void {
+	void playNotificationSound();
+
+	if (!import.meta.client || typeof window === "undefined" || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+		return;
+	}
+
+	const utterance = new SpeechSynthesisUtterance(SEARCH_SAFETY_ANNOUNCEMENT_TEXT);
+	utterance.lang = "ru-RU";
+	utterance.rate = 1;
+	utterance.pitch = 1;
+
+	utterance.onend = () => {
+		if (speechUtterance !== utterance) {
+			return;
+		}
+
+		speechUtterance = null;
 	};
 
 	utterance.onerror = () => {
@@ -254,7 +289,30 @@ function runVolunteerFoundAnnouncement(): void {
 	window.speechSynthesis.speak(utterance);
 }
 
-function buildBlindRequestMeta(): { blindProfileId: number | null, blindName: string } {
+function readBlindInterestsFromStorage(): string {
+	const fromProfile = String(auth.profile.value?.interest || "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 360);
+	if (fromProfile) {
+		return fromProfile;
+	}
+
+	if (!import.meta.client || typeof window === "undefined") {
+		return "";
+	}
+
+	try {
+		return String(window.localStorage.getItem(ONBOARDING_INTERESTS_KEY) || "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 360);
+	} catch {
+		return "";
+	}
+}
+
+function buildBlindRequestMeta(): { blindProfileId: number | null, blindName: string, blindInterests: string } {
 	const profileId = Number(auth.profile.value?.id || 0);
 	const blindProfileId = Number.isFinite(profileId) && profileId > 0 ? Math.floor(profileId) : null;
 	const blindName = String(
@@ -262,11 +320,47 @@ function buildBlindRequestMeta(): { blindProfileId: number | null, blindName: st
 		|| auth.onboardingName.value
 		|| ""
 	).trim();
+	const blindInterests = readBlindInterestsFromStorage();
 
 	return {
 		blindProfileId,
-		blindName
+		blindName,
+		blindInterests
 	};
+}
+
+async function syncBlindInterestToProfileIfNeeded(blindInterests: string): Promise<void> {
+	const normalizedInterests = String(blindInterests || "").replace(/\s+/g, " ").trim().slice(0, 360);
+	if (!normalizedInterests || !auth.profile.value) {
+		return;
+	}
+
+	const currentProfileInterests = String(auth.profile.value.interest || "").replace(/\s+/g, " ").trim().slice(0, 360);
+	if (currentProfileInterests === normalizedInterests) {
+		return;
+	}
+
+	if (auth.profileCollection.value === "profiles") {
+		try {
+			await auth.updateProfile({ interest: normalizedInterests });
+		} catch {
+			// noop
+		}
+	}
+
+	try {
+		await $fetch("/api/blind/interest/persist", {
+			method: "POST",
+			body: {
+				interest: normalizedInterests,
+				profileId: auth.profile.value.id,
+				email: auth.profile.value.emailDisplay || auth.user.value?.email || ""
+			}
+		});
+		auth.profile.value.interest = normalizedInterests;
+	} catch {
+		// noop
+	}
 }
 
 async function waitForVolunteer(session: string): Promise<void> {
@@ -294,7 +388,10 @@ async function waitForVolunteer(session: string): Promise<void> {
 				await navigateTo({
 					path: "/blind/conversation",
 					query: {
-						session
+						session,
+						...(status.volunteerProfileId ? { volunteerProfileId: String(status.volunteerProfileId) } : {}),
+						...(String(status.volunteerProfileDocumentId || "").trim() ? { volunteerProfileDocumentId: String(status.volunteerProfileDocumentId || "").trim() } : {}),
+						...(String(status.volunteerName || "").trim() ? { volunteerName: String(status.volunteerName || "").trim() } : {})
 					}
 				});
 				return;
@@ -326,7 +423,9 @@ async function retrySearch(): Promise<void> {
 	}
 
 	try {
-		const nextSessionId = await call.createHelpRequest(buildBlindRequestMeta());
+		const requestMeta = buildBlindRequestMeta();
+		await syncBlindInterestToProfileIfNeeded(requestMeta.blindInterests);
+		const nextSessionId = await call.createHelpRequest(requestMeta);
 		await waitForVolunteer(nextSessionId);
 	} catch {
 		screenState.value = "not_found";

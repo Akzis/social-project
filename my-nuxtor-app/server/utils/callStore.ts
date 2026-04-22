@@ -21,6 +21,10 @@ export interface CallSession {
 	endedAt: number | null
 	blindProfileId: number | null
 	blindName: string
+	blindInterests: string
+	volunteerProfileId: number | null
+	volunteerProfileDocumentId: string
+	volunteerName: string
 	signals: CallSignal[]
 	nextSeq: number
 }
@@ -38,7 +42,7 @@ function now(): number {
 	return Date.now();
 }
 
-function normalizeBlindProfileId(value: unknown): number | null {
+function normalizeProfileId(value: unknown): number | null {
 	const id = Number(value);
 	if (!Number.isFinite(id) || id <= 0) {
 		return null;
@@ -47,13 +51,27 @@ function normalizeBlindProfileId(value: unknown): number | null {
 	return Math.floor(id);
 }
 
-function normalizeBlindName(value: unknown): string {
+function normalizePersonName(value: unknown): string {
 	const raw = String(value || "").trim();
 	if (!raw) {
 		return "";
 	}
 
 	return raw.slice(0, 80);
+}
+
+function normalizeDocumentId(value: unknown): string {
+	const raw = String(value || "").trim();
+	return raw ? raw.slice(0, 120) : "";
+}
+
+function normalizeBlindInterests(value: unknown): string {
+	const raw = String(value || "").replace(/\s+/g, " ").trim();
+	if (!raw) {
+		return "";
+	}
+
+	return raw.slice(0, 360);
 }
 
 function getGlobalStore(): CallStore {
@@ -110,6 +128,7 @@ function findSession(sessionId: string): CallSession | null {
 interface CreateCallSessionInput {
 	blindProfileId?: number | null
 	blindName?: string
+	blindInterests?: string
 }
 
 export function createCallSession(input: CreateCallSessionInput = {}): CallSession {
@@ -123,8 +142,12 @@ export function createCallSession(input: CreateCallSessionInput = {}): CallSessi
 		updatedAt: timestamp,
 		matchedAt: null,
 		endedAt: null,
-		blindProfileId: normalizeBlindProfileId(input.blindProfileId),
-		blindName: normalizeBlindName(input.blindName),
+		blindProfileId: normalizeProfileId(input.blindProfileId),
+		blindName: normalizePersonName(input.blindName),
+		blindInterests: normalizeBlindInterests(input.blindInterests),
+		volunteerProfileId: null,
+		volunteerProfileDocumentId: "",
+		volunteerName: "",
 		signals: [],
 		nextSeq: 1
 	};
@@ -133,7 +156,13 @@ export function createCallSession(input: CreateCallSessionInput = {}): CallSessi
 	return session;
 }
 
-export function claimWaitingSession(): CallSession | null {
+interface ClaimWaitingSessionInput {
+	volunteerProfileId?: number | null
+	volunteerProfileDocumentId?: string
+	volunteerName?: string
+}
+
+export function claimWaitingSession(input: ClaimWaitingSessionInput = {}): CallSession | null {
 	cleanupStore();
 	const store = getGlobalStore();
 	const timestamp = now();
@@ -149,6 +178,9 @@ export function claimWaitingSession(): CallSession | null {
 	waitingSession.status = "matched";
 	waitingSession.matchedAt = timestamp;
 	waitingSession.updatedAt = timestamp;
+	waitingSession.volunteerProfileId = normalizeProfileId(input.volunteerProfileId);
+	waitingSession.volunteerProfileDocumentId = normalizeDocumentId(input.volunteerProfileDocumentId);
+	waitingSession.volunteerName = normalizePersonName(input.volunteerName);
 	return waitingSession;
 }
 

@@ -1,4 +1,4 @@
-<template>
+﻿<template>
 	<main class="min-h-dvh bg-gradient-to-b from-[#bfd4e5] from-[0%] to-[#f4f4f5] to-[68%]">
 		<section class="mx-auto flex min-h-dvh w-full max-w-[440px] px-[30px] pb-8 pt-8">
 			<article
@@ -22,67 +22,30 @@
 						</p>
 					</div>
 
-					<div class="mt-[26px] flex items-start gap-4 pr-2">
-						<div class="mt-1 h-[50px] w-[50px] shrink-0 rounded-full bg-gradient-to-br from-[#68b9ee] to-[#2f8ddf]" />
-						<div>
-							<p class="text-[14px] leading-none font-medium text-black">
-								Олеся AI
-							</p>
-							<p class="mt-3 whitespace-pre-line text-[14px] leading-[1.28] font-medium tracking-[-0.01em] text-black">
-								{{ searchingHintText }}
-							</p>
-						</div>
-					</div>
-
-					<div
-						v-if="showAiHint"
-						class="absolute inset-0 z-20"
-					>
-						<button
-							type="button"
-							aria-label="Скрыть подсказку"
-							class="absolute inset-0 bg-transparent"
-							@click="hideAiHint"
-						/>
-
-						<img
-							src="/Group 169 (1).png"
-							alt=""
-							aria-hidden="true"
-							class="pointer-events-none absolute left-[-16px] top-[70px] w-[230px] select-none"
-						>
-
-						<img
-							src="/Vector 216.png"
-							alt=""
-							aria-hidden="true"
-							class="pointer-events-none absolute bottom-[44px] left-[72px] w-[210px] select-none opacity-95"
-						>
-					</div>
-
-					<div class="absolute bottom-7 left-[22px] right-[22px]">
-						<div class="relative flex h-[56px] items-center rounded-full bg-[#f4f4f5] pl-[28px] pr-[72px]">
-							<p class="text-[14px] leading-none font-medium text-black/13">
-								Напишите сообщение...
-							</p>
-							<button
-								type="button"
-								disabled
-								aria-label="Отправить"
-								class="absolute right-[7px] top-1/2 flex h-[42px] w-[42px] -translate-y-1/2 items-center justify-center rounded-full bg-[#1591f0] text-[36px] leading-none font-light text-white shadow-[0_2px_6px_rgba(0,0,0,0.22)]"
-							>
-								›
-							</button>
-						</div>
-					</div>
+					<CallAssistantChat
+						assistant-id="1"
+						assistant-name="Олеся AI"
+						:initial-message="initialAssistantMessage"
+					/>
 				</template>
 
 				<template v-else-if="screenState === 'found'">
-					<img
-						src="/find.png"
-						alt="Звонок найден"
-						class="mx-auto h-auto w-[244px] object-contain"
+					<div
+						ref="foundPhoneVisual"
+						class="relative mx-auto w-[244px]"
 					>
+						<img
+							src="/find.png"
+							alt="Звонок найден"
+							class="relative z-10 mx-auto h-auto w-[244px] object-contain"
+						>
+
+						<div
+							ref="fireworksLayer"
+							aria-hidden="true"
+							class="pointer-events-none absolute inset-0 z-20"
+						/>
+					</div>
 					<p class="mt-[92px] text-center text-[22px] leading-[1.1] font-medium tracking-[-0.01em] text-black">
 						Звонок найден!
 						<br>
@@ -126,6 +89,8 @@
 </template>
 
 <script setup lang="ts">
+import { gsap } from "gsap";
+
 const SEARCH_TOTAL_SECONDS = 39;
 const SEARCH_TIMEOUT_MS = SEARCH_TOTAL_SECONDS * 1000;
 const RETRY_INTERVAL_MS = 1500;
@@ -134,26 +99,23 @@ type SearchState = "searching" | "found" | "not_found";
 
 const call = useCallMatching();
 const route = useRoute();
+const auth = useStrapiAuth();
 
 const screenState = ref<SearchState>("searching");
 const isBusy = ref(false);
 const searchRunId = ref(0);
 const searchSecondsPassed = ref(0);
-const showAiHint = ref(true);
+const fireworksLayer = ref<HTMLElement | null>(null);
+const foundPhoneVisual = ref<HTMLElement | null>(null);
 
 let countdownTimer: ReturnType<typeof setInterval> | null = null;
 let countdownStartedAtMs = 0;
+let fireworksTimer: ReturnType<typeof setInterval> | null = null;
 
-const searchingHintText = `Информация которая может при
-звонке Информация которая может
-при звонке Информация которая
-может при звонке Информация
-которая может при звонке
-Информация которая может при
-звонке
+const initialAssistantMessage = `Пока ищем собеседника, можно немного подготовиться:
+подумай, о чем хочешь поговорить в первую очередь.
 
-Если что задавай вопросы! Разберем
-вместе :)`;
+Если хочешь, просто дождись соединения - я рядом и подскажу.`;
 
 const formattedSearchTime = computed(() => {
 	return `0:${String(Math.max(0, searchSecondsPassed.value)).padStart(2, "0")}`;
@@ -186,8 +148,170 @@ function sleep(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function hideAiHint(): void {
-	showAiHint.value = false;
+function randomBetween(min: number, max: number): number {
+	return min + Math.random() * (max - min);
+}
+
+function clearFireworksLayer(): void {
+	const layer = fireworksLayer.value;
+	if (!layer) {
+		return;
+	}
+
+	const children = Array.from(layer.children);
+	if (children.length) {
+		gsap.killTweensOf(children);
+	}
+	layer.replaceChildren();
+}
+
+function stopFoundFireworks(): void {
+	if (fireworksTimer) {
+		clearInterval(fireworksTimer);
+		fireworksTimer = null;
+	}
+
+	clearFireworksLayer();
+}
+
+function createFireworkBurst(): void {
+	const layer = fireworksLayer.value;
+	const visual = foundPhoneVisual.value;
+	if (!layer || !visual) {
+		return;
+	}
+
+	const width = visual.clientWidth || 0;
+	const height = visual.clientHeight || 0;
+	if (!width || !height) {
+		return;
+	}
+
+	const centerX = width / 2 + randomBetween(-18, 18);
+	const centerY = height / 2 + randomBetween(-12, 12);
+	const colors = ["#ffffff", "#9ed0ff", "#73bfff", "#ffd166", "#ff8fab"];
+	const particlesCount = 18;
+
+	for (let index = 0; index < particlesCount; index += 1) {
+		const particle = document.createElement("span");
+		const size = randomBetween(4, 9);
+		const angle = (Math.PI * 2 * index) / particlesCount + randomBetween(-0.2, 0.2);
+		const distance = randomBetween(52, 116);
+		const x = Math.cos(angle) * distance;
+		const y = Math.sin(angle) * distance;
+		const color = colors[Math.floor(Math.random() * colors.length)] || "#ffffff";
+
+		particle.className = "absolute rounded-full";
+		particle.style.left = `${centerX}px`;
+		particle.style.top = `${centerY}px`;
+		particle.style.width = `${size}px`;
+		particle.style.height = `${size}px`;
+		particle.style.background = color;
+		particle.style.boxShadow = `0 0 12px ${color}`;
+		particle.style.transform = "translate(-50%, -50%)";
+
+		layer.appendChild(particle);
+
+		gsap.fromTo(
+			particle,
+			{
+				x: 0,
+				y: 0,
+				scale: 0.25,
+				opacity: 1
+			},
+			{
+				x,
+				y: y - randomBetween(8, 24),
+				scale: randomBetween(0.75, 1.25),
+				opacity: 0,
+				duration: randomBetween(0.75, 1.1),
+				ease: "power2.out",
+				onComplete: () => {
+					particle.remove();
+				}
+			}
+		);
+	}
+
+	const ring = document.createElement("span");
+	ring.className = "absolute rounded-full border border-white/80";
+	ring.style.left = `${centerX}px`;
+	ring.style.top = `${centerY}px`;
+	ring.style.width = "12px";
+	ring.style.height = "12px";
+	ring.style.transform = "translate(-50%, -50%)";
+	layer.appendChild(ring);
+
+	gsap.fromTo(
+		ring,
+		{
+			scale: 0.25,
+			opacity: 0.9
+		},
+		{
+			scale: 4.6,
+			opacity: 0,
+			duration: 0.8,
+			ease: "power2.out",
+			onComplete: () => {
+				ring.remove();
+			}
+		}
+	);
+}
+
+async function startFoundFireworks(): Promise<void> {
+	stopFoundFireworks();
+	await nextTick();
+	createFireworkBurst();
+	fireworksTimer = setInterval(() => {
+		createFireworkBurst();
+	}, 520);
+}
+
+function buildVolunteerMatchMeta(): { volunteerProfileId: number | null, volunteerProfileDocumentId: string, volunteerName: string } {
+	const isVolunteerProfile = auth.profileCollection.value === "volunteer-profiles";
+	const profileId = Number(auth.profile.value?.id || 0);
+	const volunteerProfileId = isVolunteerProfile && Number.isFinite(profileId) && profileId > 0
+		? Math.floor(profileId)
+		: null;
+	const volunteerProfileDocumentId = isVolunteerProfile
+		? String(auth.profile.value?.documentId || "").trim()
+		: "";
+	const volunteerName = String(
+		auth.profile.value?.firstName
+		|| auth.onboardingName.value
+		|| ""
+	).trim();
+
+	return {
+		volunteerProfileId,
+		volunteerProfileDocumentId,
+		volunteerName
+	};
+}
+
+async function ensureVolunteerMeta(): Promise<void> {
+	if (auth.profile.value) {
+		return;
+	}
+
+	try {
+		await auth.restoreSession();
+	} catch {
+		// noop
+	}
+
+	if (!auth.user.value || auth.profile.value) {
+		return;
+	}
+
+	try {
+		await auth.refreshDashboard();
+	} catch {
+		// noop
+	}
 }
 
 async function startSearch(): Promise<void> {
@@ -199,13 +323,20 @@ async function startSearch(): Promise<void> {
 	searchRunId.value = runId;
 	isBusy.value = true;
 	screenState.value = "searching";
-	showAiHint.value = true;
 	startCountdown();
+	await ensureVolunteerMeta();
 
 	const startedAt = Date.now();
 	try {
 		while (runId === searchRunId.value && Date.now() - startedAt < SEARCH_TIMEOUT_MS) {
-			const result = await call.claimHelpRequest();
+			let result: Awaited<ReturnType<typeof call.claimHelpRequest>> | null = null;
+			try {
+				result = await call.claimHelpRequest(buildVolunteerMatchMeta());
+			} catch {
+				await sleep(RETRY_INTERVAL_MS);
+				continue;
+			}
+
 			if (result.found && result.sessionId) {
 				screenState.value = "found";
 				clearCountdownTimer();
@@ -216,10 +347,14 @@ async function startSearch(): Promise<void> {
 				}
 
 				const targetPath = "/call/session";
-				const targetQuery = {
+				const targetQuery: Record<string, string> = {
 					session: result.sessionId,
 					name: String(result.blindName || "").trim()
 				};
+				const blindInterests = String(result.blindInterests || "").replace(/\s+/g, " ").trim();
+				if (blindInterests) {
+					targetQuery.interests = blindInterests;
+				}
 
 				try {
 					await navigateTo({
@@ -258,8 +393,22 @@ onMounted(() => {
 	void startSearch();
 });
 
+watch(
+	() => screenState.value,
+	(state) => {
+		if (state === "found") {
+			void startFoundFireworks();
+			return;
+		}
+
+		stopFoundFireworks();
+	}
+);
+
 onBeforeUnmount(() => {
 	searchRunId.value += 1;
 	clearCountdownTimer();
+	stopFoundFireworks();
 });
 </script>
+

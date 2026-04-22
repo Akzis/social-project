@@ -33,6 +33,14 @@
 							{{ blindDisplayName }}
 						</p>
 					</div>
+
+					<CallSessionAssistantMenu
+						assistant-id="2"
+						assistant-name="Олеся AI"
+						:blind-name="blindDisplayName"
+						:blind-interests="blindInterestsForAssistant"
+						:disabled="isEnding"
+					/>
 				</div>
 			</div>
 
@@ -81,9 +89,18 @@ const auth = useStrapiAuth();
 
 const activeSessionId = computed(() => String(route.query.session || call.currentSessionId.value || "").trim());
 const blindNameFromSession = ref("");
+const blindInterestsFromSession = ref("");
 const blindDisplayName = computed(() => {
 	const raw = String(blindNameFromSession.value || route.query.name || "").trim();
 	return raw || "Имя незрячего";
+});
+const blindInterestsForAssistant = computed(() => {
+	const fromSession = String(blindInterestsFromSession.value || "").replace(/\s+/g, " ").trim();
+	if (fromSession) {
+		return fromSession;
+	}
+
+	return String(route.query.interests || "").replace(/\s+/g, " ").trim();
 });
 
 const statusMessage = ref("Подключаемся к звонку...");
@@ -322,6 +339,11 @@ async function syncBlindMetaFromSession(): Promise<void> {
 		const blindName = String(status.blindName || "").trim();
 		if (blindName) {
 			blindNameFromSession.value = blindName;
+		}
+
+		const blindInterests = String(status.blindInterests || "").replace(/\s+/g, " ").trim();
+		if (blindInterests) {
+			blindInterestsFromSession.value = blindInterests;
 		}
 	} catch {
 		// noop

@@ -24,6 +24,10 @@ export default defineEventHandler((event) => {
 		matchedAt: session.matchedAt,
 		endedAt: session.endedAt,
 		blindProfileId: session.blindProfileId,
-		blindName: session.blindName
+		blindName: session.blindName,
+		blindInterests: session.blindInterests,
+		volunteerProfileId: session.volunteerProfileId,
+		volunteerProfileDocumentId: session.volunteerProfileDocumentId,
+		volunteerName: session.volunteerName
 	};
 });

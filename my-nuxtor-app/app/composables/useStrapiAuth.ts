@@ -18,6 +18,7 @@ export interface VolunteerProfile {
 	lastName: string
 	phone: string
 	emailDisplay: string
+	interest: string
 	gosuslugiVerified: boolean
 	soundEnabled: boolean
 	deedsCount: number
@@ -36,6 +37,12 @@ export interface VolunteerAchievement {
 	progressTarget: number
 	progressUnit: string
 	iconUrl: string | null
+}
+
+export interface VolunteerReview {
+	id: number
+	text: string
+	createdAt: string
 }
 
 interface RegisterInput {
@@ -86,6 +93,7 @@ interface YandexSessionResponse {
 const TOKEN_KEY = "volunteer_auth_token";
 const USER_KEY = "volunteer_auth_user";
 const ONBOARDING_NAME_KEY = "volunteer_onboarding_name";
+const ONBOARDING_INTERESTS_KEY = "volunteer_onboarding_interests";
 const PROFILE_ID_KEY = "volunteer_profile_id";
 const PROFILE_COLLECTION_KEY = "volunteer_profile_collection";
 
@@ -94,6 +102,7 @@ type ProfileCollection = "volunteer-profiles" | "profiles";
 const DEFAULT_NAME = "Волонтер";
 const DEFAULT_QUOTE = "";
 const DEFAULT_PROGRESS_UNIT = "звонков";
+const REVIEW_RELATION_FIELD_CANDIDATES = ["volunteer_profile", "volunteerProfile", "volunteer", "profile"] as const;
 
 function unwrapEntry(entry: any): any {
 	if (!entry) {
@@ -137,6 +146,14 @@ function toNumber(value: unknown, fallback = 0): number {
 
 function normalizeText(value: unknown): string {
 	return String(value || "").trim();
+}
+
+function normalizeReviewText(value: unknown): string {
+	return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function normalizeInterestText(value: unknown): string {
+	return String(value || "").replace(/\s+/g, " ").trim().slice(0, 360);
 }
 
 function splitFullName(fullName: string): { firstName: string, lastName: string } {
@@ -333,6 +350,7 @@ export function useStrapiAuth() {
 				lastName: String(raw.lastName || ""),
 				phone: String(raw.phone || ""),
 				emailDisplay: String(raw.email || user.value?.email || ""),
+				interest: normalizeInterestText(raw.interest),
 				gosuslugiVerified: true,
 				soundEnabled: true,
 				deedsCount: 0,
@@ -351,6 +369,7 @@ export function useStrapiAuth() {
 			lastName: String(raw.lastName || ""),
 			phone: String(raw.phone || ""),
 			emailDisplay: String(raw.emailDisplay || user.value?.email || ""),
+			interest: normalizeInterestText(raw.interest),
 			gosuslugiVerified: Boolean(raw.gosuslugiVerified),
 			soundEnabled: raw.soundEnabled !== false,
 			deedsCount: toNumber(raw.deedsCount, 0),
@@ -370,7 +389,8 @@ export function useStrapiAuth() {
 				firstName: initial.firstName || onboardingName.value || DEFAULT_NAME,
 				lastName: initial.lastName || "",
 				phone: initial.phone || "",
-				email: initial.emailDisplay || user.value.email
+				email: initial.emailDisplay || user.value.email,
+				interest: normalizeInterestText(initial.interest)
 			};
 		}
 
@@ -395,14 +415,16 @@ export function useStrapiAuth() {
 				firstName,
 				lastName,
 				phone,
-				emailDisplay
+				emailDisplay,
+				interest
 			} = updates;
 
 			return {
 				...(firstName !== undefined ? { firstName } : {}),
 				...(lastName !== undefined ? { lastName } : {}),
 				...(phone !== undefined ? { phone } : {}),
-				...(emailDisplay !== undefined ? { email: emailDisplay } : {})
+				...(emailDisplay !== undefined ? { email: emailDisplay } : {}),
+				...(interest !== undefined ? { interest: normalizeInterestText(interest) } : {})
 			};
 		}
 
@@ -514,6 +536,11 @@ export function useStrapiAuth() {
 		const hasUnknownField = /invalid key|unknown field|unknown parameter/.test(message);
 		const mentionsUserField = /\buser\b|users_permissions_user|users-permissions-user/.test(message);
 		return hasUnknownField && mentionsUserField;
+	}
+
+	function isUnknownFieldError(error: unknown): boolean {
+		const message = normalizeError(error).toLowerCase();
+		return /invalid key|unknown field|unknown parameter/.test(message);
 	}
 
 	function isNotFoundError(error: unknown): boolean {
@@ -845,6 +872,14 @@ export function useStrapiAuth() {
 		}
 	}
 
+	function readOnboardingInterestFromStorage(): string {
+		if (!import.meta.client) {
+			return "";
+		}
+
+		return normalizeInterestText(localStorage.getItem(ONBOARDING_INTERESTS_KEY) || "");
+	}
+
 	async function syncProfileFromYandex(identity: YandexIdentityInfo | null | undefined, fallbackUser: YandexSessionResponse["user"]): Promise<void> {
 		if (!user.value) {
 			return;
@@ -853,13 +888,18 @@ export function useStrapiAuth() {
 		applyRegistrationModeToProfileCollection(identity?.registrationMode);
 
 		const normalized = normalizeYandexIdentity(identity, fallbackUser);
-		const profileSeed = {
+		const onboardingInterest = readOnboardingInterestFromStorage();
+		const isBlindProfileCollection = profileCollection.value === "profiles";
+		const profileSeed: Partial<VolunteerProfile> = {
 			firstName: normalized.firstName || onboardingName.value || DEFAULT_NAME,
 			lastName: normalized.lastName,
 			phone: normalized.phone,
 			emailDisplay: normalized.email || user.value.email,
 			gosuslugiVerified: true
-		} satisfies Partial<VolunteerProfile>;
+		};
+		if (isBlindProfileCollection && onboardingInterest) {
+			profileSeed.interest = onboardingInterest;
+		}
 
 		if (!onboardingName.value && normalized.firstName) {
 			setOnboardingName(normalized.firstName);
@@ -886,6 +926,10 @@ export function useStrapiAuth() {
 
 		if (!ensuredProfile.gosuslugiVerified) {
 			updates.gosuslugiVerified = true;
+		}
+
+		if (isBlindProfileCollection && onboardingInterest && normalizeInterestText(ensuredProfile.interest) !== onboardingInterest) {
+			updates.interest = onboardingInterest;
 		}
 
 		if (Object.keys(updates).length > 0) {
@@ -1266,6 +1310,233 @@ export function useStrapiAuth() {
 		return profile.value;
 	}
 
+	async function loadVolunteerReviews(targetVolunteerProfileId: number): Promise<VolunteerReview[]> {
+		const normalizedProfileId = Math.floor(Number(targetVolunteerProfileId));
+		if (!Number.isFinite(normalizedProfileId) || normalizedProfileId <= 0) {
+			return [];
+		}
+
+		const deduped = new Map<number, VolunteerReview>();
+		let hadRequestError = false;
+
+		for (const relationField of REVIEW_RELATION_FIELD_CANDIDATES) {
+			const path = `/review-valonteers?populate=*&sort=createdAt:desc&filters[${relationField}][id][$eq]=${normalizedProfileId}`;
+			try {
+				const entries = await requestListWithPublicationFallback(path);
+				for (const entry of entries) {
+					const reviewId = toNumber(entry?.id, 0);
+					const text = normalizeReviewText(entry?.text);
+					if (!reviewId || !text) {
+						continue;
+					}
+
+					deduped.set(reviewId, {
+						id: reviewId,
+						text,
+						createdAt: String(entry?.createdAt || "")
+					});
+				}
+			} catch (error) {
+				if (isUnknownFieldError(error)) {
+					continue;
+				}
+				hadRequestError = true;
+			}
+		}
+
+		if (!deduped.size && hadRequestError) {
+			return [];
+		}
+
+		const sortedByDate = [...deduped.values()].sort((a, b) => {
+			const left = Date.parse(a.createdAt || "") || 0;
+			const right = Date.parse(b.createdAt || "") || 0;
+			return right - left;
+		});
+
+		// Some users send the same review multiple times; keep only the newest unique text.
+		const uniqueByText = new Set<string>();
+		const result: VolunteerReview[] = [];
+		for (const review of sortedByDate) {
+			const textKey = normalizeReviewText(review.text).toLowerCase();
+			if (!textKey || uniqueByText.has(textKey)) {
+				continue;
+			}
+			uniqueByText.add(textKey);
+			result.push(review);
+		}
+
+		return result;
+	}
+
+	async function resolveVolunteerProfileForReview(targetVolunteerProfileId: number): Promise<{ id: number, documentId: string } | null> {
+		if (!Number.isFinite(targetVolunteerProfileId) || targetVolunteerProfileId <= 0) {
+			return null;
+		}
+
+		const resolvedCurrentProfileDocumentId = String(profile.value?.documentId || "").trim();
+		if (
+			profileCollection.value === "volunteer-profiles"
+			&& profile.value?.id === targetVolunteerProfileId
+			&& resolvedCurrentProfileDocumentId
+		) {
+			return {
+				id: profile.value.id,
+				documentId: resolvedCurrentProfileDocumentId
+			};
+		}
+
+		const lookupPaths = [
+			`/volunteer-profiles?filters[id][$eq]=${targetVolunteerProfileId}&populate=*`,
+			`/volunteer-profiles?filters[user][id][$eq]=${targetVolunteerProfileId}&populate=*`,
+			"/volunteer-profiles?populate=*"
+		];
+
+		const toResolvedProfile = (entry: any): { id: number, documentId: string } | null => {
+			const resolvedId = toNumber(entry?.id, 0);
+			const resolvedDocumentId = String(entry?.documentId || "").trim();
+			if (resolvedId <= 0 || !resolvedDocumentId) {
+				return null;
+			}
+
+			return {
+				id: resolvedId,
+				documentId: resolvedDocumentId
+			};
+		};
+
+		for (const path of lookupPaths) {
+			try {
+				const entries = await requestListWithPublicationFallback(path);
+				if (!entries.length) {
+					continue;
+				}
+
+				const byId = entries.find(entry => toNumber(entry?.id, 0) === targetVolunteerProfileId);
+				const byUserId = entries.find(entry => extractProfileUserId(entry, "volunteer-profiles") === targetVolunteerProfileId);
+
+				const resolvedById = toResolvedProfile(byId);
+				if (resolvedById) {
+					return resolvedById;
+				}
+
+				const resolvedByUserId = toResolvedProfile(byUserId);
+				if (resolvedByUserId) {
+					return resolvedByUserId;
+				}
+
+				if (path !== "/volunteer-profiles?populate=*") {
+					const resolvedFirst = toResolvedProfile(entries[0]);
+					if (resolvedFirst) {
+						return resolvedFirst;
+					}
+				}
+			} catch (error) {
+				if (isNotFoundError(error) || isUnknownFieldError(error)) {
+					continue;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	function buildReviewRelationPayloadCandidates(profileDocumentId: string): any[] {
+		const normalizedDocumentId = String(profileDocumentId || "").trim();
+		if (!normalizedDocumentId) {
+			return [];
+		}
+
+		const candidates: any[] = [
+			normalizedDocumentId,
+			{
+				connect: [normalizedDocumentId]
+			},
+			{
+				connect: [{ documentId: normalizedDocumentId }]
+			}
+		];
+
+		const deduped = new Map<string, any>();
+		for (const candidate of candidates) {
+			const key = JSON.stringify(candidate);
+			if (!deduped.has(key)) {
+				deduped.set(key, candidate);
+			}
+		}
+
+		return [...deduped.values()];
+	}
+
+	async function submitVolunteerReview(
+		targetVolunteerProfileId: number | null,
+		reviewText: string,
+		targetVolunteerProfileDocumentId = ""
+	): Promise<void> {
+		const normalizedProfileId = Math.floor(Number(targetVolunteerProfileId));
+		const hasValidProfileId = Number.isFinite(normalizedProfileId) && normalizedProfileId > 0;
+		const normalizedTargetProfileDocumentId = String(targetVolunteerProfileDocumentId || "").trim();
+		if (!hasValidProfileId && !normalizedTargetProfileDocumentId) {
+			throw new Error("Не удалось определить профиль волонтера для отзыва.");
+		}
+
+		const normalizedReview = normalizeReviewText(reviewText).slice(0, 1000);
+		if (!normalizedReview) {
+			throw new Error("Введите текст отзыва перед отправкой.");
+		}
+
+		let resolvedVolunteerProfileDocumentId = normalizedTargetProfileDocumentId;
+		if (!resolvedVolunteerProfileDocumentId && hasValidProfileId) {
+			const resolvedVolunteerProfile = await resolveVolunteerProfileForReview(normalizedProfileId);
+			if (resolvedVolunteerProfile?.documentId) {
+				resolvedVolunteerProfileDocumentId = resolvedVolunteerProfile.documentId;
+			}
+		}
+
+		if (!resolvedVolunteerProfileDocumentId) {
+			throw new Error("Не удалось определить профиль волонтера для привязки отзыва.");
+		}
+
+		const relationPayloadCandidates = buildReviewRelationPayloadCandidates(resolvedVolunteerProfileDocumentId);
+
+		let lastWriteError: unknown = null;
+
+		for (const relationField of REVIEW_RELATION_FIELD_CANDIDATES) {
+			let unknownField = false;
+			for (const relationPayload of relationPayloadCandidates) {
+				try {
+					await strapiRequest<any>("/review-valonteers", {
+						method: "POST",
+						body: {
+							data: {
+								text: normalizedReview,
+								[relationField]: relationPayload
+							}
+						}
+					});
+					return;
+				} catch (error) {
+					if (isUnknownFieldError(error)) {
+						unknownField = true;
+						break;
+					}
+					lastWriteError = error;
+					continue;
+				}
+			}
+
+			if (unknownField) {
+				continue;
+			}
+		}
+
+		if (lastWriteError) {
+			throw lastWriteError;
+		}
+
+		throw new Error("Не удалось сохранить отзыв: проверь поле связи с волонтером в review-valonteers.");
+	}
+
 	async function restoreSession(): Promise<void> {
 		if (initialized.value) {
 			return;
@@ -1466,6 +1737,8 @@ export function useStrapiAuth() {
 		syncCallAchievementProgress,
 		restoreFromYandexSession,
 		updateProfile,
+		loadVolunteerReviews,
+		submitVolunteerReview,
 		setOnboardingName,
 		normalizeError
 	};

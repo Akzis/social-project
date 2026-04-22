@@ -84,6 +84,7 @@ const ONBOARDING_INTERESTS_KEY = "volunteer_onboarding_interests";
 const AUTO_CONFIRM_SECONDS = 15;
 const HOLD_TO_EDIT_MS = 5000;
 const CONFIRMATION_KEYWORD = "да";
+const auth = useStrapiAuth();
 
 const interest = ref("");
 const displayInterest = computed(() => interest.value.trim() || "интерес");
@@ -109,7 +110,27 @@ function loadStoredInterest(): string {
 		return "";
 	}
 
-	return String(localStorage.getItem(ONBOARDING_INTERESTS_KEY) || "").trim();
+	return normalizeInterest(localStorage.getItem(ONBOARDING_INTERESTS_KEY) || "");
+}
+
+function persistInterest(value: string): void {
+	if (!import.meta.client) {
+		return;
+	}
+
+	const normalized = normalizeInterest(value);
+	if (normalized) {
+		localStorage.setItem(ONBOARDING_INTERESTS_KEY, normalized);
+	} else {
+		localStorage.removeItem(ONBOARDING_INTERESTS_KEY);
+	}
+}
+
+function normalizeInterest(value: unknown): string {
+	return String(value || "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.slice(0, 360);
 }
 
 function clearHoldTimers(): void {
@@ -399,6 +420,35 @@ async function confirmInterest(): Promise<void> {
 		return;
 	}
 
+	const normalizedInterest = normalizeInterest(interest.value);
+	persistInterest(normalizedInterest);
+
+	const profileIdForPersist = auth.profile.value?.id || null;
+	const emailForPersist = auth.profile.value?.emailDisplay || auth.user.value?.email || null;
+
+	if (normalizedInterest && (profileIdForPersist || emailForPersist)) {
+		try {
+			await $fetch("/api/blind/interest/persist", {
+				method: "POST",
+				body: {
+					interest: normalizedInterest,
+					profileId: profileIdForPersist,
+					email: emailForPersist
+				}
+			});
+		} catch {
+			// noop
+		}
+	}
+
+	if (normalizedInterest && auth.profile.value && auth.profileCollection.value === "profiles") {
+		try {
+			await auth.updateProfile({ interest: normalizedInterest });
+		} catch {
+			// noop
+		}
+	}
+
 	isNavigating.value = true;
 	stopCountdown();
 	stopAnnouncement();
@@ -422,6 +472,7 @@ async function editInterest(): Promise<void> {
 
 onMounted(() => {
 	interest.value = loadStoredInterest();
+	persistInterest(interest.value);
 	runAnnouncementThenCountdown();
 });
 

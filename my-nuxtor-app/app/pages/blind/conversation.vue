@@ -1,14 +1,8 @@
-<template>
+﻿<template>
 	<main class="min-h-dvh bg-[#f4f4f5]">
 		<section class="mx-auto flex min-h-dvh w-full max-w-[430px] flex-col px-6 pb-7 pt-8 text-center">
 			<template v-if="!hasSession">
-				<div class="my-auto">
-					<h1 class="text-[52px] leading-[0.95] font-semibold tracking-[-0.03em] text-[#3f75df]">
-						РЕЖИМ
-						<br>
-						РАЗГОВОРА
-					</h1>
-				</div>
+				<BlindConversationAssistantChat @exit="navigateToBlindHomeFromChat" />
 			</template>
 
 			<template v-else>
@@ -80,6 +74,7 @@ import type { CallSignalItem } from "~/composables/useCallMatching";
 
 const HOLD_TO_END_MS = 5000;
 const SIGNAL_POLL_MS = 700;
+const CONVERSATION_ENTRY_INSTRUCTION_TEXT = "Режим разговора с волонтером открыт. Чтобы завершить звонок, зажми экран на 5 секунд.";
 
 const route = useRoute();
 const call = useCallMatching();
@@ -92,6 +87,9 @@ const cameraMessage = ref("");
 const holdProgress = ref(0);
 const isEnding = ref(false);
 const showLocalPreview = ref(false);
+const volunteerProfileId = ref<number | null>(null);
+const volunteerProfileDocumentId = ref("");
+const volunteerName = ref("");
 
 const localPreview = useTemplateRef<HTMLVideoElement>("localPreview");
 const remoteAudio = useTemplateRef<HTMLAudioElement>("remoteAudio");
@@ -99,6 +97,7 @@ const remoteAudio = useTemplateRef<HTMLAudioElement>("remoteAudio");
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let holdProgressTimer: ReturnType<typeof setInterval> | null = null;
 let holdStartedAt = 0;
+let entrySpeechUtterance: SpeechSynthesisUtterance | null = null;
 
 let peerConnection: RTCPeerConnection | null = null;
 let localStream: MediaStream | null = null;
@@ -108,6 +107,141 @@ let signalPollTimer: ReturnType<typeof setTimeout> | null = null;
 let signalPollInFlight = false;
 let isPageActive = true;
 const pendingRemoteCandidates: RTCIceCandidateInit[] = [];
+
+function queryToString(value: string | string[] | undefined): string {
+	if (Array.isArray(value)) {
+		return String(value[0] || "").trim();
+	}
+
+	return String(value || "").trim();
+}
+
+function toPositiveProfileId(value: unknown): number | null {
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		return null;
+	}
+
+	return Math.floor(parsed);
+}
+
+function syncVolunteerMetaFromRoute(): void {
+	const parsedProfileId = toPositiveProfileId(queryToString(route.query.volunteerProfileId as string | string[] | undefined));
+	if (parsedProfileId) {
+		volunteerProfileId.value = parsedProfileId;
+	}
+
+	const parsedProfileDocumentId = queryToString(route.query.volunteerProfileDocumentId as string | string[] | undefined);
+	if (parsedProfileDocumentId) {
+		volunteerProfileDocumentId.value = parsedProfileDocumentId;
+	}
+
+	const parsedName = queryToString(route.query.volunteerName as string | string[] | undefined);
+	if (parsedName) {
+		volunteerName.value = parsedName;
+	}
+}
+
+async function syncVolunteerMetaFromSession(): Promise<void> {
+	if (!activeSessionId.value) {
+		return;
+	}
+
+	try {
+		const status = await call.getSessionStatus(activeSessionId.value);
+		const profileIdFromStatus = toPositiveProfileId(status.volunteerProfileId);
+		if (profileIdFromStatus) {
+			volunteerProfileId.value = profileIdFromStatus;
+		}
+
+		const profileDocumentIdFromStatus = String(status.volunteerProfileDocumentId || "").trim();
+		if (profileDocumentIdFromStatus) {
+			volunteerProfileDocumentId.value = profileDocumentIdFromStatus;
+		}
+
+		const nameFromStatus = String(status.volunteerName || "").trim();
+		if (nameFromStatus) {
+			volunteerName.value = nameFromStatus;
+		}
+	} catch {
+		// noop
+	}
+}
+
+async function navigateToReviewPage(sessionId: string): Promise<void> {
+	const query: Record<string, string> = {};
+	const normalizedSession = String(sessionId || "").trim();
+	const normalizedVolunteerName = String(volunteerName.value || "").trim();
+
+	if (normalizedSession) {
+		query.session = normalizedSession;
+	}
+
+	if (volunteerProfileId.value && volunteerProfileId.value > 0) {
+		query.volunteerProfileId = String(volunteerProfileId.value);
+	}
+
+	const normalizedVolunteerProfileDocumentId = String(volunteerProfileDocumentId.value || "").trim();
+	if (normalizedVolunteerProfileDocumentId) {
+		query.volunteerProfileDocumentId = normalizedVolunteerProfileDocumentId;
+	}
+
+	if (normalizedVolunteerName) {
+		query.volunteerName = normalizedVolunteerName;
+	}
+
+	await navigateTo({
+		path: "/blind/review",
+		query
+	});
+}
+
+async function navigateToBlindHomeFromChat(): Promise<void> {
+	await navigateTo("/blind/home");
+}
+
+function stopEntryInstructionSpeech(): void {
+	if (!import.meta.client || typeof window === "undefined" || !("speechSynthesis" in window)) {
+		entrySpeechUtterance = null;
+		return;
+	}
+
+	window.speechSynthesis.cancel();
+	entrySpeechUtterance = null;
+}
+
+function speakEntryInstruction(): void {
+	if (!hasSession.value) {
+		return;
+	}
+
+	if (!import.meta.client || typeof window === "undefined" || !("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+		return;
+	}
+
+	stopEntryInstructionSpeech();
+	const utterance = new SpeechSynthesisUtterance(CONVERSATION_ENTRY_INSTRUCTION_TEXT);
+	utterance.lang = "ru-RU";
+	utterance.rate = 1;
+	utterance.pitch = 1;
+	utterance.onend = () => {
+		if (entrySpeechUtterance !== utterance) {
+			return;
+		}
+
+		entrySpeechUtterance = null;
+	};
+	utterance.onerror = () => {
+		if (entrySpeechUtterance !== utterance) {
+			return;
+		}
+
+		entrySpeechUtterance = null;
+	};
+
+	entrySpeechUtterance = utterance;
+	window.speechSynthesis.speak(utterance);
+}
 
 function clearHoldTimers(): void {
 	if (holdTimer) {
@@ -312,7 +446,7 @@ async function handleSignal(signal: CallSignalItem): Promise<void> {
 		isEnding.value = true;
 		await cleanupConnection();
 		call.setCurrentSessionId(null);
-		await navigateTo("/blind/home");
+		await navigateToReviewPage(activeSessionId.value);
 	}
 }
 
@@ -334,7 +468,7 @@ async function pollSignals(): Promise<void> {
 			isEnding.value = true;
 			await cleanupConnection();
 			call.setCurrentSessionId(null);
-			await navigateTo("/blind/home");
+			await navigateToReviewPage(activeSessionId.value);
 			return;
 		}
 	} catch {
@@ -409,7 +543,7 @@ async function finishCallByHold(): Promise<void> {
 
 	await cleanupConnection();
 	call.setCurrentSessionId(null);
-	await navigateTo("/blind/home");
+	await navigateToReviewPage(activeSessionId.value);
 }
 
 function startEndHold(): void {
@@ -451,6 +585,8 @@ async function startConversationSession(): Promise<void> {
 
 	call.setCurrentSessionId(activeSessionId.value);
 	statusMessage.value = "Подключаемся к волонтеру...";
+	syncVolunteerMetaFromRoute();
+	await syncVolunteerMetaFromSession();
 	ensurePeerConnection();
 	await prepareBlindMedia();
 	await pollSignals();
@@ -461,11 +597,14 @@ onMounted(() => {
 		return;
 	}
 
+	speakEntryInstruction();
 	void startConversationSession();
 });
 
 onBeforeUnmount(() => {
 	isPageActive = false;
+	stopEntryInstructionSpeech();
 	void cleanupConnection();
 });
 </script>
+

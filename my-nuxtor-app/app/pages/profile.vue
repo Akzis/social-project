@@ -18,10 +18,29 @@
 				<h2 class="relative text-[28px] leading-none font-medium tracking-[-0.025em] text-black">
 					Что про тебя думают?
 				</h2>
-				<p class="relative mx-auto mt-4 max-w-[300px] text-[15px] leading-[1.2] font-medium tracking-[-0.01em] text-black">
-					{{ quoteTextView }}
-				</p>
-				<div class="relative mx-auto mt-3 h-[4px] w-14 rounded-full bg-[#4f8fea]" />
+
+				<div
+					ref="reviewsTrack"
+					class="relative mt-4 flex snap-x snap-mandatory overflow-x-auto scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+					@scroll="handleReviewsScroll"
+				>
+					<div
+						v-for="review in quoteReviews"
+						:key="review.id"
+						class="min-w-full snap-center px-2"
+					>
+						<p class="mx-auto max-w-[300px] text-[15px] leading-[1.2] font-medium tracking-[-0.01em] text-black">
+							{{ review.text }}
+						</p>
+					</div>
+				</div>
+
+				<div class="relative mx-auto mt-3 h-[4px] w-22 overflow-hidden rounded-full bg-[#4f8fea]/30">
+					<div
+						class="h-full rounded-full bg-[#4f8fea] transition-[width] duration-100"
+						:style="{ width: `${reviewProgressPercent}%` }"
+					/>
+				</div>
 			</section>
 
 			<section class="mt-10">
@@ -126,7 +145,10 @@
 				<input
 					v-model="editorValue"
 					:type="editor.key === 'phone' ? 'tel' : editor.key === 'emailDisplay' ? 'email' : 'text'"
+					:inputmode="editor.key === 'phone' ? 'numeric' : undefined"
+					:maxlength="editor.key === 'phone' ? 18 : 120"
 					class="mt-2 w-full rounded-[14px] border border-black/10 bg-[#f5f6f7] px-3 py-2 text-[16px] leading-none text-black outline-none focus:border-[#4f8fea]"
+					@input="handleEditorInput"
 				>
 
 				<div class="mt-4 grid grid-cols-2 gap-2">
@@ -156,6 +178,17 @@
 <script setup lang="ts">
 type EditableKey = "firstName" | "lastName" | "phone" | "emailDisplay" | "quoteText";
 
+interface ProfileReviewCard {
+	id: number
+	text: string
+	createdAt: string
+}
+
+const REVIEW_SWITCH_MS = 7000;
+const REVIEW_PROGRESS_TICK_MS = 100;
+const REVIEW_SCROLL_LOCK_MS = 420;
+const RU_PHONE_FORMATTED_LENGTH = 18;
+
 const auth = useStrapiAuth();
 
 const loading = ref(true);
@@ -164,6 +197,15 @@ const soundSaving = ref(false);
 const accountDeleting = ref(false);
 const statusError = ref("");
 const statusSuccess = ref("");
+const reviewsTrack = ref<HTMLElement | null>(null);
+const quoteReviews = ref<ProfileReviewCard[]>([]);
+const activeReviewIndex = ref(0);
+const reviewProgressPercent = ref(0);
+
+let reviewProgressTimer: ReturnType<typeof setInterval> | null = null;
+let reviewSwitchTimer: ReturnType<typeof setTimeout> | null = null;
+let reviewScrollUnlockTimer: ReturnType<typeof setTimeout> | null = null;
+let blockReviewScrollSync = false;
 
 const form = reactive({
 	firstName: "",
@@ -196,17 +238,74 @@ const helpCount = computed(() => auth.profile.value?.deedsCount ?? 0);
 const soundEnabled = computed(() => auth.profile.value?.soundEnabled ?? true);
 const firstNameView = computed(() => form.firstName || "Катя");
 const emailView = computed(() => form.emailDisplay || auth.user.value?.email || "no-email");
-const quoteTextView = computed(() => form.quoteText.trim());
-const hasQuoteSection = computed(() => {
-	const quote = quoteTextView.value;
-	if (!quote) {
-		return false;
+const hasQuoteSection = computed(() => quoteReviews.value.length > 0);
+
+function toRussianPhoneStorage(value: string): string | null {
+	const digits = String(value || "").replace(/\D/g, "");
+	if (!digits) {
+		return null;
 	}
 
-	// Hide broken mojibake defaults like "РЎРї..." that are not real user quotes.
-	const looksLikeMojibake = /(?:Р.|С.|Ð.|Ñ.){4,}/.test(quote);
-	return !looksLikeMojibake;
-});
+	let normalized = digits;
+	if (normalized.length === 11 && normalized.startsWith("8")) {
+		normalized = `7${normalized.slice(1)}`;
+	} else if (normalized.length === 10) {
+		normalized = `7${normalized}`;
+	}
+
+	if (!/^7\d{10}$/.test(normalized)) {
+		return null;
+	}
+
+	return `+${normalized}`;
+}
+
+function formatRussianPhone(value: string): string {
+	const storagePhone = toRussianPhoneStorage(value);
+	if (!storagePhone) {
+		return "";
+	}
+
+	const national = storagePhone.slice(2);
+	return `+7 (${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6, 8)}-${national.slice(8, 10)}`;
+}
+
+function formatRussianPhoneInput(value: string): string {
+	const digitsRaw = String(value || "").replace(/\D/g, "");
+	if (!digitsRaw) {
+		return "+7";
+	}
+
+	let digits = digitsRaw;
+	if (digits.startsWith("8")) {
+		digits = `7${digits.slice(1)}`;
+	}
+	if (!digits.startsWith("7")) {
+		digits = `7${digits}`;
+	}
+	digits = digits.slice(0, 11);
+
+	const national = digits.slice(1);
+	let masked = "+7";
+
+	if (national.length > 0) {
+		masked += ` (${national.slice(0, 3)}`;
+	}
+	if (national.length >= 3) {
+		masked += ")";
+	}
+	if (national.length > 3) {
+		masked += ` ${national.slice(3, 6)}`;
+	}
+	if (national.length > 6) {
+		masked += `-${national.slice(6, 8)}`;
+	}
+	if (national.length > 8) {
+		masked += `-${national.slice(8, 10)}`;
+	}
+
+	return masked.slice(0, RU_PHONE_FORMATTED_LENGTH);
+}
 
 const contactFields = computed(() => [
 	{
@@ -226,7 +325,7 @@ const contactFields = computed(() => [
 	{
 		key: "phone" as EditableKey,
 		label: "Номер Телефона",
-		value: form.phone || "-",
+		value: formatRussianPhone(form.phone) || "-",
 		editable: true,
 		actionLabel: form.phone.trim() ? "Изменить" : "Добавить"
 	},
@@ -248,16 +347,182 @@ watch(
 
 		form.firstName = profile.firstName || "";
 		form.lastName = profile.lastName || "";
-		form.phone = profile.phone || "";
+		form.phone = toRussianPhoneStorage(profile.phone || "") || "";
 		form.emailDisplay = profile.emailDisplay || auth.user.value?.email || "";
 		form.quoteText = profile.quoteText || "";
 	},
 	{ immediate: true }
 );
 
+watch(
+	() => auth.profile.value?.id || 0,
+	(profileId) => {
+		void loadQuoteReviews(profileId);
+	},
+	{ immediate: true }
+);
+
 onMounted(async () => {
+	if (import.meta.client) {
+		window.addEventListener("resize", handleWindowResize);
+	}
+
 	await refresh();
 });
+
+onBeforeUnmount(() => {
+	stopReviewAutoplay();
+	clearReviewScrollLock();
+	if (import.meta.client) {
+		window.removeEventListener("resize", handleWindowResize);
+	}
+});
+
+function clearReviewTimers(): void {
+	if (reviewProgressTimer) {
+		clearInterval(reviewProgressTimer);
+		reviewProgressTimer = null;
+	}
+	if (reviewSwitchTimer) {
+		clearTimeout(reviewSwitchTimer);
+		reviewSwitchTimer = null;
+	}
+}
+
+function clearReviewScrollLock(): void {
+	if (reviewScrollUnlockTimer) {
+		clearTimeout(reviewScrollUnlockTimer);
+		reviewScrollUnlockTimer = null;
+	}
+	blockReviewScrollSync = false;
+}
+
+function stopReviewAutoplay(): void {
+	clearReviewTimers();
+	reviewProgressPercent.value = quoteReviews.value.length === 1 ? 100 : 0;
+}
+
+function normalizeReviewIndex(index: number, total: number): number {
+	if (!total) {
+		return 0;
+	}
+	const safe = Math.floor(index);
+	return ((safe % total) + total) % total;
+}
+
+function syncReviewTrackPosition(behavior: ScrollBehavior = "auto"): void {
+	const track = reviewsTrack.value;
+	if (!track || !quoteReviews.value.length) {
+		return;
+	}
+
+	const left = track.clientWidth * activeReviewIndex.value;
+	track.scrollTo({ left, behavior });
+}
+
+function startReviewAutoplay(): void {
+	clearReviewTimers();
+
+	const reviewCount = quoteReviews.value.length;
+	if (!reviewCount) {
+		reviewProgressPercent.value = 0;
+		return;
+	}
+
+	if (reviewCount === 1) {
+		reviewProgressPercent.value = 100;
+		return;
+	}
+
+	const startedAt = Date.now();
+	reviewProgressPercent.value = 0;
+
+	reviewProgressTimer = setInterval(() => {
+		const elapsed = Date.now() - startedAt;
+		reviewProgressPercent.value = Math.min(100, (elapsed / REVIEW_SWITCH_MS) * 100);
+	}, REVIEW_PROGRESS_TICK_MS);
+
+	reviewSwitchTimer = setTimeout(() => {
+		moveToReview(activeReviewIndex.value + 1, true);
+	}, REVIEW_SWITCH_MS);
+}
+
+function moveToReview(index: number, smooth = true): void {
+	const reviewCount = quoteReviews.value.length;
+	if (!reviewCount) {
+		return;
+	}
+
+	activeReviewIndex.value = normalizeReviewIndex(index, reviewCount);
+	const track = reviewsTrack.value;
+	if (track) {
+		blockReviewScrollSync = true;
+		track.scrollTo({
+			left: track.clientWidth * activeReviewIndex.value,
+			behavior: smooth ? "smooth" : "auto"
+		});
+		clearReviewScrollLock();
+		reviewScrollUnlockTimer = setTimeout(() => {
+			blockReviewScrollSync = false;
+		}, smooth ? REVIEW_SCROLL_LOCK_MS : 0);
+	}
+
+	startReviewAutoplay();
+}
+
+function handleReviewsScroll(): void {
+	if (blockReviewScrollSync) {
+		return;
+	}
+
+	const track = reviewsTrack.value;
+	if (!track || quoteReviews.value.length <= 1) {
+		return;
+	}
+
+	const pageWidth = track.clientWidth || 1;
+	const nextIndex = Math.round(track.scrollLeft / pageWidth);
+	const boundedIndex = Math.max(0, Math.min(quoteReviews.value.length - 1, nextIndex));
+
+	if (boundedIndex === activeReviewIndex.value) {
+		return;
+	}
+
+	activeReviewIndex.value = boundedIndex;
+	startReviewAutoplay();
+}
+
+function handleWindowResize(): void {
+	syncReviewTrackPosition("auto");
+}
+
+async function loadQuoteReviews(profileId: number): Promise<void> {
+	const normalizedProfileId = Math.floor(Number(profileId));
+	if (!Number.isFinite(normalizedProfileId) || normalizedProfileId <= 0) {
+		quoteReviews.value = [];
+		activeReviewIndex.value = 0;
+		stopReviewAutoplay();
+		return;
+	}
+
+	try {
+		const reviews = await auth.loadVolunteerReviews(normalizedProfileId);
+		quoteReviews.value = reviews
+			.map((review) => ({
+				id: Number(review.id || 0),
+				text: String(review.text || "").trim(),
+				createdAt: String(review.createdAt || "")
+			}))
+			.filter((review) => review.id > 0 && review.text.length > 0);
+	} catch {
+		quoteReviews.value = [];
+	}
+
+	activeReviewIndex.value = 0;
+	await nextTick();
+	syncReviewTrackPosition("auto");
+	startReviewAutoplay();
+}
 
 async function refresh(): Promise<void> {
 	loading.value = true;
@@ -277,6 +542,10 @@ function editField(key: EditableKey): void {
 	editor.open = true;
 	editor.key = key;
 	editor.label = fieldLabels[key];
+	if (key === "phone") {
+		editorValue.value = formatRussianPhoneInput(form.phone || "+7");
+		return;
+	}
 	editorValue.value = form[key] || "";
 }
 
@@ -285,6 +554,14 @@ function closeEditor(): void {
 	editor.key = null;
 	editor.label = "";
 	editorValue.value = "";
+}
+
+function handleEditorInput(): void {
+	if (editor.key !== "phone") {
+		return;
+	}
+
+	editorValue.value = formatRussianPhoneInput(editorValue.value);
 }
 
 function isValidEmail(value: string): boolean {
@@ -297,6 +574,22 @@ async function saveEditor(): Promise<void> {
 	}
 
 	const nextValue = editorValue.value.trim();
+	if (editor.key === "phone") {
+		const normalizedPhone = toRussianPhoneStorage(nextValue);
+		if (!normalizedPhone) {
+			statusError.value = "Введите российский номер в формате +7 (999) 999-99-99.";
+			statusSuccess.value = "";
+			return;
+		}
+
+		form.phone = normalizedPhone;
+		const saved = await saveProfile();
+		if (saved) {
+			closeEditor();
+		}
+		return;
+	}
+
 	if (editor.key === "emailDisplay" && nextValue && !isValidEmail(nextValue)) {
 		statusError.value = "Введите корректный email.";
 		statusSuccess.value = "";
@@ -336,10 +629,21 @@ async function saveProfile(): Promise<boolean> {
 	saving.value = true;
 
 	try {
+		const normalizedPhone = form.phone.trim()
+			? toRussianPhoneStorage(form.phone)
+			: "";
+		if (form.phone.trim() && !normalizedPhone) {
+			statusError.value = "Введите российский номер в формате +7 (999) 999-99-99.";
+			statusSuccess.value = "";
+			return false;
+		}
+
+		form.phone = normalizedPhone || "";
+
 		await auth.updateProfile({
 			firstName: form.firstName.trim(),
 			lastName: form.lastName.trim(),
-			phone: form.phone.trim(),
+			phone: normalizedPhone || "",
 			quoteText: form.quoteText.trim()
 		});
 		statusSuccess.value = "Профиль обновлен.";
