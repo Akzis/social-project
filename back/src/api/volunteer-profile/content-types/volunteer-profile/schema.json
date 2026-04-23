@@ -11,11 +11,35 @@
   },
   "pluginOptions": {},
   "attributes": {
-    "user": {
-      "type": "relation",
-      "relation": "oneToOne",
-      "target": "plugin::users-permissions.user",
-      "inversedBy": "volunteer_profile"
+    "authUserId": {
+      "type": "integer",
+      "unique": true
+    },
+    "provider": {
+      "type": "enumeration",
+      "enum": [
+        "local",
+        "yandex",
+        "other"
+      ],
+      "default": "local"
+    },
+    "providerUserId": {
+      "type": "string",
+      "unique": true
+    },
+    "providerLogin": {
+      "type": "string"
+    },
+    "registrationMode": {
+      "type": "enumeration",
+      "enum": [
+        "volunteer"
+      ],
+      "default": "volunteer"
+    },
+    "name": {
+      "type": "string"
     },
     "firstName": {
       "type": "string"
@@ -26,8 +50,29 @@
     "phone": {
       "type": "string"
     },
+    "email": {
+      "type": "email",
+      "required": true,
+      "unique": true
+    },
     "emailDisplay": {
       "type": "email"
+    },
+    "displayName": {
+      "type": "string"
+    },
+    "avatarUrl": {
+      "type": "string"
+    },
+    "emailVerified": {
+      "type": "boolean",
+      "default": false
+    },
+    "lastLoginAt": {
+      "type": "datetime"
+    },
+    "interest": {
+      "type": "text"
     },
     "gosuslugiVerified": {
       "type": "boolean",

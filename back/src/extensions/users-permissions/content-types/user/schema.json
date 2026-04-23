@@ -65,12 +65,6 @@
       "target": "plugin::users-permissions.role",
       "inversedBy": "users",
       "configurable": false
-    },
-    "volunteer_profile": {
-      "type": "relation",
-      "relation": "oneToOne",
-      "target": "api::volunteer-profile.volunteer-profile",
-      "mappedBy": "user"
     }
   }
 }

@@ -14,6 +14,16 @@ export interface VolunteerProfile {
 	documentId: string
 	createdAt?: string
 	updatedAt?: string
+	authUserId: number
+	provider: "local" | "yandex" | "other"
+	providerUserId: string
+	providerLogin: string
+	registrationMode: "volunteer"
+	email: string
+	displayName: string
+	avatarUrl: string
+	emailVerified: boolean
+	lastLoginAt: string
 	firstName: string
 	lastName: string
 	phone: string
@@ -213,13 +223,17 @@ function buildAchievementByIdPath(achievementId: number): string {
 	return `/volunteer-achievements?populate=*&filters[id][$eq]=${achievementId}`;
 }
 
-function getProfileUserRelationField(profileCollection: ProfileCollection): "user" | "users_permissions_user" {
-	return profileCollection === "profiles" ? "users_permissions_user" : "user";
+function getProfileOwnerField(profileCollection: ProfileCollection): "authUserId" | "users_permissions_user" {
+	return profileCollection === "profiles" ? "users_permissions_user" : "authUserId";
 }
 
 function buildProfileByUserPath(userId: number, profileCollection: ProfileCollection): string {
-	const relationField = getProfileUserRelationField(profileCollection);
-	return `/${profileCollection}?filters[${relationField}][id][$eq]=${userId}&populate=*`;
+	const ownerField = getProfileOwnerField(profileCollection);
+	if (profileCollection === "profiles") {
+		return `/${profileCollection}?filters[${ownerField}][id][$eq]=${userId}&populate=*`;
+	}
+
+	return `/${profileCollection}?filters[${ownerField}][$eq]=${userId}&populate=*`;
 }
 
 function buildProfileByIdPath(profileId: number, profileCollection: ProfileCollection): string {
@@ -235,8 +249,16 @@ function buildProfileDeleteByRefPath(profileRef: string, profileCollection: Prof
 }
 
 function buildProfileByEmailPath(email: string, profileCollection: ProfileCollection): string {
-	const emailField = profileCollection === "profiles" ? "email" : "emailDisplay";
-	return `/${profileCollection}?filters[${emailField}][$eqi]=${encodeURIComponent(email)}&populate=*`;
+	const normalizedEmail = encodeURIComponent(email);
+	if (profileCollection === "profiles") {
+		return `/${profileCollection}?filters[email][$eqi]=${normalizedEmail}&populate=*`;
+	}
+
+	return `/${profileCollection}?filters[$or][0][email][$eqi]=${normalizedEmail}&filters[$or][1][emailDisplay][$eqi]=${normalizedEmail}&populate=*`;
+}
+
+function buildVolunteerProfileByProviderUserIdPath(providerUserId: string): string {
+	return `/volunteer-profiles?filters[providerUserId][$eq]=${encodeURIComponent(providerUserId)}&populate=*`;
 }
 
 function buildProfilesCatalogPath(profileCollection: ProfileCollection): string {
@@ -315,6 +337,7 @@ export function useStrapiAuth() {
 	const achievements = useState<VolunteerAchievement[]>("auth_achievements", () => []);
 	const initialized = useState<boolean>("auth_initialized", () => false);
 	const onboardingName = useState<string>("onboarding_name", () => "");
+	const currentProviderUserId = useState<string>("auth_provider_user_id", () => "");
 
 	const baseUrl = computed(() => {
 		const raw = String(runtimeConfig.public.strapiUrl || "http://localhost:1337");
@@ -340,16 +363,27 @@ export function useStrapiAuth() {
 	}
 
 	function mapProfile(raw: any, sourceCollection: ProfileCollection): VolunteerProfile {
+		const email = String(raw.email || raw.emailDisplay || user.value?.email || "");
 		if (sourceCollection === "profiles") {
 			return {
 				id: toNumber(raw.id),
 				documentId: String(raw.documentId || ""),
 				createdAt: String(raw.createdAt || ""),
 				updatedAt: String(raw.updatedAt || ""),
+				authUserId: toNumber(user.value?.id, 0),
+				provider: "other",
+				providerUserId: "",
+				providerLogin: "",
+				registrationMode: "volunteer",
+				email,
+				displayName: String(raw.firstName || raw.name || DEFAULT_NAME),
+				avatarUrl: "",
+				emailVerified: true,
+				lastLoginAt: "",
 				firstName: String(raw.firstName || ""),
 				lastName: String(raw.lastName || ""),
 				phone: String(raw.phone || ""),
-				emailDisplay: String(raw.email || user.value?.email || ""),
+				emailDisplay: email,
 				interest: normalizeInterestText(raw.interest),
 				gosuslugiVerified: true,
 				soundEnabled: true,
@@ -365,10 +399,22 @@ export function useStrapiAuth() {
 			documentId: String(raw.documentId || ""),
 			createdAt: String(raw.createdAt || ""),
 			updatedAt: String(raw.updatedAt || ""),
+			authUserId: toNumber(raw.authUserId, 0),
+			provider: (["local", "yandex", "other"].includes(String(raw.provider || ""))
+				? String(raw.provider)
+				: "local") as VolunteerProfile["provider"],
+			providerUserId: String(raw.providerUserId || ""),
+			providerLogin: String(raw.providerLogin || ""),
+			registrationMode: "volunteer",
+			email,
+			displayName: String(raw.displayName || raw.name || raw.firstName || DEFAULT_NAME),
+			avatarUrl: String(raw.avatarUrl || ""),
+			emailVerified: Boolean(raw.emailVerified),
+			lastLoginAt: String(raw.lastLoginAt || ""),
 			firstName: String(raw.firstName || ""),
 			lastName: String(raw.lastName || ""),
 			phone: String(raw.phone || ""),
-			emailDisplay: String(raw.emailDisplay || user.value?.email || ""),
+			emailDisplay: email,
 			interest: normalizeInterestText(raw.interest),
 			gosuslugiVerified: Boolean(raw.gosuslugiVerified),
 			soundEnabled: raw.soundEnabled !== false,
@@ -384,27 +430,39 @@ export function useStrapiAuth() {
 			return {};
 		}
 
+		const normalizedEmail = normalizeText(initial.email || initial.emailDisplay || user.value.email).toLowerCase();
+
 		if (sourceCollection === "profiles") {
 			return {
 				firstName: initial.firstName || onboardingName.value || DEFAULT_NAME,
 				lastName: initial.lastName || "",
 				phone: initial.phone || "",
-				email: initial.emailDisplay || user.value.email,
+				email: normalizedEmail,
 				interest: normalizeInterestText(initial.interest)
 			};
 		}
 
 		return {
-			user: user.value.id,
+			authUserId: user.value.id,
+			provider: initial.provider || "local",
+			providerUserId: initial.providerUserId || "",
+			providerLogin: initial.providerLogin || "",
+			registrationMode: "volunteer",
+			email: normalizedEmail,
+			emailDisplay: normalizedEmail,
+			displayName: initial.displayName || initial.firstName || onboardingName.value || DEFAULT_NAME,
+			avatarUrl: initial.avatarUrl || "",
+			emailVerified: initial.emailVerified ?? false,
+			lastLoginAt: initial.lastLoginAt || new Date().toISOString(),
 			firstName: initial.firstName || onboardingName.value || DEFAULT_NAME,
 			lastName: initial.lastName || "",
 			phone: initial.phone || "",
-			emailDisplay: initial.emailDisplay || user.value.email,
 			gosuslugiVerified: initial.gosuslugiVerified ?? false,
 			soundEnabled: initial.soundEnabled ?? true,
 			deedsCount: initial.deedsCount ?? 0,
 			totalHours: initial.totalHours ?? 0,
 			peopleNeedHelp: initial.peopleNeedHelp ?? 500,
+			interest: normalizeInterestText(initial.interest),
 			quoteText: initial.quoteText || DEFAULT_QUOTE
 		};
 	}
@@ -428,8 +486,29 @@ export function useStrapiAuth() {
 			};
 		}
 
+		const normalizedEmail = normalizeText(updates.email || updates.emailDisplay).toLowerCase();
+
 		return {
-			...updates
+			...(updates.authUserId !== undefined ? { authUserId: updates.authUserId } : {}),
+			...(updates.provider !== undefined ? { provider: updates.provider } : {}),
+			...(updates.providerUserId !== undefined ? { providerUserId: updates.providerUserId } : {}),
+			...(updates.providerLogin !== undefined ? { providerLogin: updates.providerLogin } : {}),
+			...(updates.registrationMode !== undefined ? { registrationMode: updates.registrationMode } : {}),
+			...(normalizedEmail ? { email: normalizedEmail, emailDisplay: normalizedEmail } : {}),
+			...(updates.displayName !== undefined ? { displayName: updates.displayName } : {}),
+			...(updates.avatarUrl !== undefined ? { avatarUrl: updates.avatarUrl } : {}),
+			...(updates.emailVerified !== undefined ? { emailVerified: updates.emailVerified } : {}),
+			...(updates.lastLoginAt !== undefined ? { lastLoginAt: updates.lastLoginAt } : {}),
+			...(updates.firstName !== undefined ? { firstName: updates.firstName } : {}),
+			...(updates.lastName !== undefined ? { lastName: updates.lastName } : {}),
+			...(updates.phone !== undefined ? { phone: updates.phone } : {}),
+			...(updates.interest !== undefined ? { interest: normalizeInterestText(updates.interest) } : {}),
+			...(updates.gosuslugiVerified !== undefined ? { gosuslugiVerified: updates.gosuslugiVerified } : {}),
+			...(updates.soundEnabled !== undefined ? { soundEnabled: updates.soundEnabled } : {}),
+			...(updates.deedsCount !== undefined ? { deedsCount: updates.deedsCount } : {}),
+			...(updates.totalHours !== undefined ? { totalHours: updates.totalHours } : {}),
+			...(updates.peopleNeedHelp !== undefined ? { peopleNeedHelp: updates.peopleNeedHelp } : {}),
+			...(updates.quoteText !== undefined ? { quoteText: updates.quoteText } : {})
 		};
 	}
 
@@ -534,7 +613,7 @@ export function useStrapiAuth() {
 	function isUserFieldError(error: unknown): boolean {
 		const message = normalizeError(error).toLowerCase();
 		const hasUnknownField = /invalid key|unknown field|unknown parameter/.test(message);
-		const mentionsUserField = /\buser\b|users_permissions_user|users-permissions-user/.test(message);
+		const mentionsUserField = /\buser\b|users_permissions_user|users-permissions-user|authuserid/.test(message);
 		return hasUnknownField && mentionsUserField;
 	}
 
@@ -577,6 +656,24 @@ export function useStrapiAuth() {
 		const status = maybeError?.data?.error?.status || maybeError?.statusCode || maybeError?.status || 0;
 		const message = String(maybeError?.data?.error?.message || maybeError?.message || "").toLowerCase();
 		return status === 405 || /method not allowed/.test(message);
+	}
+
+	function isInvalidCredentialsError(error: unknown): boolean {
+		const maybeError = error as {
+			status?: number
+			statusCode?: number
+			data?: {
+				error?: {
+					status?: number
+					message?: string
+				}
+			}
+			message?: string
+		};
+
+		const status = maybeError?.data?.error?.status || maybeError?.statusCode || maybeError?.status || 0;
+		const message = String(maybeError?.data?.error?.message || maybeError?.message || "").toLowerCase();
+		return status === 401 || /invalid credentials|jwt|token/.test(message);
 	}
 
 	async function requestListWithPublicationFallback(path: string): Promise<any[]> {
@@ -812,6 +909,7 @@ export function useStrapiAuth() {
 
 	function clearSessionStorage(): void {
 		if (!import.meta.client) {
+			currentProviderUserId.value = "";
 			return;
 		}
 
@@ -819,6 +917,7 @@ export function useStrapiAuth() {
 		localStorage.removeItem(USER_KEY);
 		localStorage.removeItem(PROFILE_ID_KEY);
 		localStorage.removeItem(PROFILE_COLLECTION_KEY);
+		currentProviderUserId.value = "";
 	}
 
 	function applyExternalStrapiSession(sessionToken: string, sessionUser: { id?: number, email?: string, username?: string } | null | undefined): boolean {
@@ -845,6 +944,10 @@ export function useStrapiAuth() {
 		lastName: string
 		email: string
 		phone: string
+		providerUserId: string
+		providerLogin: string
+		displayName: string
+		avatarUrl: string
 	} {
 		const fullName = normalizeText(identity?.name || fallbackUser?.name);
 		const split = splitFullName(fullName);
@@ -852,12 +955,20 @@ export function useStrapiAuth() {
 		const lastName = normalizeText(identity?.lastName) || split.lastName;
 		const email = normalizeText(identity?.email || fallbackUser?.email || user.value?.email).toLowerCase();
 		const phone = normalizeText(identity?.phone);
+		const providerUserId = normalizeText(identity?.yandexId);
+		const providerLogin = normalizeText(identity?.login);
+		const displayName = normalizeText(identity?.name || fullName || firstName || DEFAULT_NAME);
+		const avatarUrl = normalizeText(identity?.avatar);
 
 		return {
 			firstName,
 			lastName,
 			email,
-			phone
+			phone,
+			providerUserId,
+			providerLogin,
+			displayName,
+			avatarUrl
 		};
 	}
 
@@ -894,9 +1005,21 @@ export function useStrapiAuth() {
 			firstName: normalized.firstName || onboardingName.value || DEFAULT_NAME,
 			lastName: normalized.lastName,
 			phone: normalized.phone,
+			email: normalized.email || user.value.email,
 			emailDisplay: normalized.email || user.value.email,
 			gosuslugiVerified: true
 		};
+		if (!isBlindProfileCollection) {
+			profileSeed.authUserId = user.value.id;
+			profileSeed.provider = "yandex";
+			profileSeed.providerUserId = normalized.providerUserId;
+			profileSeed.providerLogin = normalized.providerLogin;
+			profileSeed.displayName = normalized.displayName;
+			profileSeed.avatarUrl = normalized.avatarUrl;
+			profileSeed.registrationMode = "volunteer";
+			profileSeed.emailVerified = true;
+			profileSeed.lastLoginAt = new Date().toISOString();
+		}
 		if (isBlindProfileCollection && onboardingInterest) {
 			profileSeed.interest = onboardingInterest;
 		}
@@ -922,6 +1045,30 @@ export function useStrapiAuth() {
 
 		if (!normalizeText(ensuredProfile.emailDisplay) && profileSeed.emailDisplay) {
 			updates.emailDisplay = profileSeed.emailDisplay;
+		}
+		if (!isBlindProfileCollection && !normalizeText(ensuredProfile.email) && profileSeed.email) {
+			updates.email = profileSeed.email;
+		}
+		if (!isBlindProfileCollection && ensuredProfile.authUserId <= 0) {
+			updates.authUserId = user.value.id;
+		}
+		if (!isBlindProfileCollection && normalized.providerUserId && !normalizeText(ensuredProfile.providerUserId)) {
+			updates.providerUserId = normalized.providerUserId;
+		}
+		if (!isBlindProfileCollection && normalized.providerLogin && !normalizeText(ensuredProfile.providerLogin)) {
+			updates.providerLogin = normalized.providerLogin;
+		}
+		if (!isBlindProfileCollection && normalized.displayName && !normalizeText(ensuredProfile.displayName)) {
+			updates.displayName = normalized.displayName;
+		}
+		if (!isBlindProfileCollection && normalized.avatarUrl && !normalizeText(ensuredProfile.avatarUrl)) {
+			updates.avatarUrl = normalized.avatarUrl;
+		}
+		if (!isBlindProfileCollection && !ensuredProfile.emailVerified) {
+			updates.emailVerified = true;
+		}
+		if (!isBlindProfileCollection) {
+			updates.lastLoginAt = new Date().toISOString();
 		}
 
 		if (!ensuredProfile.gosuslugiVerified) {
@@ -951,6 +1098,7 @@ export function useStrapiAuth() {
 			if (!applied) {
 				return false;
 			}
+			currentProviderUserId.value = String(payload?.identity?.yandexId || "").trim();
 
 			try {
 				await syncProfileFromYandex(payload?.identity, payload?.user);
@@ -970,6 +1118,23 @@ export function useStrapiAuth() {
 		}
 	}
 
+	async function withYandexSessionRetry<T>(operation: () => Promise<T>): Promise<T> {
+		try {
+			return await operation();
+		} catch (error) {
+			if (!isInvalidCredentialsError(error)) {
+				throw error;
+			}
+
+			const restored = await restoreFromYandexSession();
+			if (!restored) {
+				throw error;
+			}
+
+			return await operation();
+		}
+	}
+
 	function setOnboardingName(value: string): void {
 		onboardingName.value = value.trim();
 
@@ -986,14 +1151,26 @@ export function useStrapiAuth() {
 
 	function findProfileByEmail(entries: any[], email: string, sourceCollection: ProfileCollection): any | null {
 		const normalizedEmail = email.trim().toLowerCase();
-		const emailField = sourceCollection === "profiles" ? "email" : "emailDisplay";
-		const exactMatch = entries.find(entry => String(entry?.[emailField] || "").trim().toLowerCase() === normalizedEmail);
+		const exactMatch = entries.find((entry) => {
+			const primaryEmail = String(entry?.email || "").trim().toLowerCase();
+			const legacyEmail = String(entry?.emailDisplay || "").trim().toLowerCase();
+			return primaryEmail === normalizedEmail || legacyEmail === normalizedEmail;
+		});
 		return exactMatch || entries[0] || null;
 	}
 
 	function extractProfileUserId(entry: any, sourceCollection: ProfileCollection): number {
-		const relationField = getProfileUserRelationField(sourceCollection);
-		const relation = unwrapEntry(entry?.[relationField]?.data ?? entry?.[relationField]);
+		if (sourceCollection === "volunteer-profiles") {
+			const authUserId = toNumber(entry?.authUserId, 0);
+			if (authUserId > 0) {
+				return authUserId;
+			}
+
+			const legacyRelation = unwrapEntry(entry?.user?.data ?? entry?.user);
+			return toNumber(legacyRelation?.id, 0);
+		}
+
+		const relation = unwrapEntry(entry?.users_permissions_user?.data ?? entry?.users_permissions_user);
 		return toNumber(relation?.id, 0);
 	}
 
@@ -1020,7 +1197,12 @@ export function useStrapiAuth() {
 
 		const pathCandidates = [
 			...(sourceCollection === "volunteer-profiles"
-				? [{ path: buildProfileByUserPath(user.value.id, sourceCollection), type: "user" as const }]
+				? [
+					{ path: buildProfileByUserPath(user.value.id, sourceCollection), type: "user" as const },
+					...(currentProviderUserId.value
+						? [{ path: buildVolunteerProfileByProviderUserIdPath(currentProviderUserId.value), type: "provider" as const }]
+						: [])
+				]
 				: []),
 			{ path: buildProfilesCatalogPath(sourceCollection), type: "catalog" as const },
 			{ path: buildProfileByEmailPath(user.value.email, sourceCollection), type: "email" as const }
@@ -1038,8 +1220,12 @@ export function useStrapiAuth() {
 					selectedProfile = findProfileByEmail(byUserId, user.value.email, sourceCollection);
 
 					if (!selectedProfile) {
-						const emailField = sourceCollection === "profiles" ? "email" : "emailDisplay";
-						const byEmail = entries.filter(entry => String(entry?.[emailField] || "").trim().toLowerCase() === user.value?.email.trim().toLowerCase());
+						const normalizedEmail = user.value?.email.trim().toLowerCase();
+						const byEmail = entries.filter((entry) => {
+							const primaryEmail = String(entry?.email || "").trim().toLowerCase();
+							const legacyEmail = String(entry?.emailDisplay || "").trim().toLowerCase();
+							return primaryEmail === normalizedEmail || legacyEmail === normalizedEmail;
+						});
 						selectedProfile = findProfileByEmail(byEmail, user.value.email, sourceCollection);
 					}
 				} else {
@@ -1209,14 +1395,22 @@ export function useStrapiAuth() {
 
 		token.value = authPayload.jwt;
 		user.value = authPayload.user;
+		currentProviderUserId.value = "";
 		persistSession();
 		setProfileCollection("volunteer-profiles");
 
 		await ensureProfile({
+			authUserId: authPayload.user.id,
+			provider: "local",
+			registrationMode: "volunteer",
+			email,
 			firstName: input.firstName?.trim() || onboardingName.value || DEFAULT_NAME,
 			lastName: input.lastName?.trim() || "",
 			phone: input.phone?.trim() || "",
 			emailDisplay: email,
+			displayName: input.firstName?.trim() || onboardingName.value || DEFAULT_NAME,
+			emailVerified: true,
+			lastLoginAt: new Date().toISOString(),
 			gosuslugiVerified: false
 		});
 
@@ -1237,12 +1431,20 @@ export function useStrapiAuth() {
 
 		token.value = authPayload.jwt;
 		user.value = authPayload.user;
+		currentProviderUserId.value = "";
 		persistSession();
 		setProfileCollection("volunteer-profiles");
 
 		await ensureProfile({
+			authUserId: authPayload.user.id,
+			provider: "local",
+			registrationMode: "volunteer",
+			email,
 			firstName: onboardingName.value || DEFAULT_NAME,
-			emailDisplay: email
+			emailDisplay: email,
+			displayName: onboardingName.value || DEFAULT_NAME,
+			emailVerified: true,
+			lastLoginAt: new Date().toISOString()
 		});
 
 		await loadAchievements();
@@ -1388,7 +1590,7 @@ export function useStrapiAuth() {
 
 		const lookupPaths = [
 			`/volunteer-profiles?filters[id][$eq]=${targetVolunteerProfileId}&populate=*`,
-			`/volunteer-profiles?filters[user][id][$eq]=${targetVolunteerProfileId}&populate=*`,
+			`/volunteer-profiles?filters[authUserId][$eq]=${targetVolunteerProfileId}&populate=*`,
 			"/volunteer-profiles?populate=*"
 		];
 
@@ -1504,15 +1706,31 @@ export function useStrapiAuth() {
 		for (const relationField of REVIEW_RELATION_FIELD_CANDIDATES) {
 			let unknownField = false;
 			for (const relationPayload of relationPayloadCandidates) {
+				const writePayload = {
+					data: {
+						text: normalizedReview,
+						[relationField]: relationPayload
+					}
+				};
+
 				try {
-					await strapiRequest<any>("/review-valonteers", {
+					await strapiRequestPublic<any>("/review-valonteers/public-submit", {
 						method: "POST",
-						body: {
-							data: {
-								text: normalizedReview,
-								[relationField]: relationPayload
-							}
-						}
+						body: writePayload
+					});
+					return;
+				} catch (publicError) {
+					if (!isNotFoundError(publicError) && !isMethodNotAllowedError(publicError)) {
+						throw publicError;
+					}
+				}
+
+				try {
+					await withYandexSessionRetry(async () => {
+						await strapiRequest<any>("/review-valonteers", {
+							method: "POST",
+							body: writePayload
+						});
 					});
 					return;
 				} catch (error) {
@@ -1593,6 +1811,7 @@ export function useStrapiAuth() {
 		profile.value = null;
 		profileCollection.value = "volunteer-profiles";
 		achievements.value = [];
+		currentProviderUserId.value = "";
 		setOnboardingName("");
 		clearSessionStorage();
 	}

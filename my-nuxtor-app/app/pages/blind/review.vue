@@ -463,6 +463,11 @@ async function submitReview(): Promise<void> {
 		return;
 	}
 
+	if (!volunteerProfileId.value && !String(volunteerProfileDocumentId.value || "").trim()) {
+		syncMetaFromRoute();
+		await syncMetaFromSession();
+	}
+
 	const normalizedVolunteerProfileDocumentId = String(volunteerProfileDocumentId.value || "").trim();
 	if (!volunteerProfileId.value && !normalizedVolunteerProfileDocumentId) {
 		statusMessage.value = "Не удалось определить волонтера. Можно нажать «Пропустить».";

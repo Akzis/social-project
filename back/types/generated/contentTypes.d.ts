@@ -644,14 +644,23 @@ export interface ApiVolunteerProfileVolunteerProfile
     draftAndPublish: false;
   };
   attributes: {
+    authUserId: Schema.Attribute.Integer & Schema.Attribute.Unique;
+    avatarUrl: Schema.Attribute.String;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
     deedsCount: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<0>;
+    displayName: Schema.Attribute.String;
+    email: Schema.Attribute.Email &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique;
     emailDisplay: Schema.Attribute.Email;
+    emailVerified: Schema.Attribute.Boolean & Schema.Attribute.DefaultTo<false>;
     firstName: Schema.Attribute.String;
     gosuslugiVerified: Schema.Attribute.Boolean &
       Schema.Attribute.DefaultTo<false>;
+    interest: Schema.Attribute.Text;
+    lastLoginAt: Schema.Attribute.DateTime;
     lastName: Schema.Attribute.String;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<
@@ -659,10 +668,17 @@ export interface ApiVolunteerProfileVolunteerProfile
       'api::volunteer-profile.volunteer-profile'
     > &
       Schema.Attribute.Private;
+    name: Schema.Attribute.String;
     peopleNeedHelp: Schema.Attribute.Integer & Schema.Attribute.DefaultTo<500>;
     phone: Schema.Attribute.String;
+    provider: Schema.Attribute.Enumeration<['local', 'yandex', 'other']> &
+      Schema.Attribute.DefaultTo<'local'>;
+    providerLogin: Schema.Attribute.String;
+    providerUserId: Schema.Attribute.String & Schema.Attribute.Unique;
     publishedAt: Schema.Attribute.DateTime;
     quoteText: Schema.Attribute.Text;
+    registrationMode: Schema.Attribute.Enumeration<['volunteer']> &
+      Schema.Attribute.DefaultTo<'volunteer'>;
     review_valonteers: Schema.Attribute.Relation<
       'oneToMany',
       'api::review-valonteer.review-valonteer'
@@ -672,10 +688,6 @@ export interface ApiVolunteerProfileVolunteerProfile
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
-    user: Schema.Attribute.Relation<
-      'oneToOne',
-      'plugin::users-permissions.user'
-    >;
     volunteer_achievement_progresses: Schema.Attribute.Relation<
       'oneToMany',
       'api::volunteer-achievement-progress.volunteer-achievement-progress'
@@ -1179,10 +1191,6 @@ export interface PluginUsersPermissionsUser
       Schema.Attribute.SetMinMaxLength<{
         minLength: 3;
       }>;
-    volunteer_profile: Schema.Attribute.Relation<
-      'oneToOne',
-      'api::volunteer-profile.volunteer-profile'
-    >;
   };
 }
 

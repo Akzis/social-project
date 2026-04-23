@@ -271,14 +271,11 @@ async function startFoundFireworks(): Promise<void> {
 }
 
 function buildVolunteerMatchMeta(): { volunteerProfileId: number | null, volunteerProfileDocumentId: string, volunteerName: string } {
-	const isVolunteerProfile = auth.profileCollection.value === "volunteer-profiles";
 	const profileId = Number(auth.profile.value?.id || 0);
-	const volunteerProfileId = isVolunteerProfile && Number.isFinite(profileId) && profileId > 0
+	const volunteerProfileId = Number.isFinite(profileId) && profileId > 0
 		? Math.floor(profileId)
 		: null;
-	const volunteerProfileDocumentId = isVolunteerProfile
-		? String(auth.profile.value?.documentId || "").trim()
-		: "";
+	const volunteerProfileDocumentId = String(auth.profile.value?.documentId || "").trim();
 	const volunteerName = String(
 		auth.profile.value?.firstName
 		|| auth.onboardingName.value
@@ -331,7 +328,13 @@ async function startSearch(): Promise<void> {
 		while (runId === searchRunId.value && Date.now() - startedAt < SEARCH_TIMEOUT_MS) {
 			let result: Awaited<ReturnType<typeof call.claimHelpRequest>> | null = null;
 			try {
-				result = await call.claimHelpRequest(buildVolunteerMatchMeta());
+				const volunteerMatchMeta = buildVolunteerMatchMeta();
+				if (!volunteerMatchMeta.volunteerProfileId && !volunteerMatchMeta.volunteerProfileDocumentId) {
+					await ensureVolunteerMeta();
+					await sleep(RETRY_INTERVAL_MS);
+					continue;
+				}
+				result = await call.claimHelpRequest(volunteerMatchMeta);
 			} catch {
 				await sleep(RETRY_INTERVAL_MS);
 				continue;

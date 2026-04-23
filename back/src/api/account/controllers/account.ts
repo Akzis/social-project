@@ -48,19 +48,37 @@ export default {
 			});
 		const userEmail = String((userEntry as { email?: unknown })?.email || "").trim().toLowerCase();
 
-		const profileEntries = await strapi.db
-			.query("api::volunteer-profile.volunteer-profile")
-			.findMany({
-				where: { user: userId },
-				select: ["id"]
-			});
+		const volunteerProfileIds = new Set<number>();
 
-		for (const profileEntry of profileEntries) {
-			const profileId = toId((profileEntry as { id?: unknown })?.id);
-			if (profileId <= 0) {
-				continue;
+		const addVolunteerProfileIds = async (where: Record<string, unknown>) => {
+			try {
+				const profileEntries = await strapi.db
+					.query("api::volunteer-profile.volunteer-profile")
+					.findMany({
+						where,
+						select: ["id"]
+					});
+
+				for (const profileEntry of profileEntries) {
+					const profileId = toId((profileEntry as { id?: unknown })?.id);
+					if (profileId > 0) {
+						volunteerProfileIds.add(profileId);
+					}
+				}
+			} catch {
+				// noop: field may be absent depending on schema revision.
 			}
+		};
 
+		await addVolunteerProfileIds({ authUserId: userId });
+		await addVolunteerProfileIds({ user: userId });
+
+		if (userEmail) {
+			await addVolunteerProfileIds({ email: userEmail });
+			await addVolunteerProfileIds({ emailDisplay: userEmail });
+		}
+
+		for (const profileId of volunteerProfileIds) {
 			await strapi.db
 				.query("api::volunteer-achievement-progress.volunteer-achievement-progress")
 				.deleteMany({
