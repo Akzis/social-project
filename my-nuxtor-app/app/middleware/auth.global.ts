@@ -1,5 +1,5 @@
 const AUTH_PAGE = "/onboarding/gosuslugi";
-const PRIVATE_PAGES = new Set(["/home", "/stats", "/profile", "/call", "/blind/home", "/blind/help", "/blind/conversation"]);
+const PRIVATE_PAGES = new Set(["/home", "/stats", "/profile", "/call", "/blind/home", "/blind/help", "/blind/conversation", "/blind/cv"]);
 const PRIVATE_PREFIXES = ["/achievements", "/call"];
 
 export default defineNuxtRouteMiddleware(async (to) => {

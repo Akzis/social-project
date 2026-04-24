@@ -43,6 +43,19 @@
 				</span>
 			</button>
 
+			<button
+				type="button"
+				class="flex h-[180px] w-full flex-col items-center justify-center rounded-[34px] bg-[#3f75df] px-6 py-8 text-center text-[#f4f4f5] transition active:scale-[0.995]"
+				:disabled="isNavigating"
+				@click="openCvSystem"
+			>
+				<span class="text-[44px] leading-[0.95] font-semibold tracking-[-0.03em] sm:text-[50px]">
+					КАМЕРА
+					<br>
+					ОБЪЕКТОВ
+				</span>
+			</button>
+
 			<p
 				v-if="activeHold && holdProgress > 0 && holdProgress < 100"
 				aria-live="polite"
@@ -88,7 +101,8 @@ type SpeechRecognitionLike = {
 type SpeechRecognitionCtor = new () => SpeechRecognitionLike
 
 const HOLD_MS = 5000;
-const BLIND_HOME_ANNOUNCEMENT_TEXT = "Давай познакомим тебя с приложением, что бы получить помощь просто скажи «Найти Помощь» или зажми кнопку «Найти Помощь» на 5 секунд. Если хочешь просто поговорить - скажи «Давай поговорим» или зажми кнопку «Режим Разговора» на 5 секунд.";
+const CV_SYSTEM_PATH = "/blind/cv";
+const BLIND_HOME_ANNOUNCEMENT_TEXT = "Давай познакомим тебя с приложением, что бы получить помощь просто скажи «Найти Помощь» или зажми кнопку «Найти Помощь» на 5 секунд. Если хочешь просто поговорить - скажи «Давай поговорим» или зажми кнопку «Режим Разговора» на 5 секунд. Для камеры с распознаванием объектов нажми кнопку «Камера объектов».";
 const VOICE_HELP_KEYWORDS = ["найти помощь", "найти помошь"];
 const VOICE_CONVERSATION_KEYWORDS = ["давай поговорим", "режим разговора"];
 const ONBOARDING_INTERESTS_KEY = "volunteer_onboarding_interests";
@@ -596,6 +610,27 @@ async function handleLogout(): Promise<void> {
 		await auth.logout();
 		await navigateTo("/");
 	} finally {
+		isNavigating.value = false;
+	}
+}
+
+async function openCvSystem(): Promise<void> {
+	if (isNavigating.value) {
+		return;
+	}
+
+	isNavigating.value = true;
+	stopVoiceControl();
+	stopAnnouncement();
+	clearHoldTimers();
+	activeHold.value = null;
+	holdProgress.value = 0;
+	statusMessage.value = "Открываю камеру с распознаванием объектов...";
+
+	try {
+		await navigateTo(CV_SYSTEM_PATH);
+	} catch {
+		statusMessage.value = "Не удалось открыть камеру объектов. Попробуй снова.";
 		isNavigating.value = false;
 	}
 }

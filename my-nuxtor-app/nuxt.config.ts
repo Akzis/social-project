@@ -8,6 +8,7 @@ export default defineNuxtConfig({
 		yandexClientId: process.env.NUXT_YANDEX_CLIENT_ID || "",
 		yandexClientSecret: process.env.NUXT_YANDEX_CLIENT_SECRET || "",
 		yandexRedirectUri: process.env.NUXT_YANDEX_REDIRECT_URI || "http://localhost:3000/api/auth/yandex/callback",
+		cvBaseUrl: process.env.NUXT_CV_BASE_URL || "https://cv.vishka.kvantoriumvlz.ru",
 		strapiOauthPasswordSalt: process.env.NUXT_STRAPI_OAUTH_PASSWORD_SALT || "dev-oauth-salt",
 		langflowBaseUrl: process.env.NUXT_LANGFLOW_BASE_URL || "",
 		langflowApiKey: process.env.NUXT_LANGFLOW_API_KEY || "",
